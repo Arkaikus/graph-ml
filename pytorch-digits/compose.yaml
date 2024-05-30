@@ -1,0 +1,18 @@
+services:
+  pytorch-digits:
+    entrypoint:
+      - sleep
+      - infinity
+    image: pytorch/pytorch:2.3.0-cuda11.8-cudnn8-runtime
+    volumes:
+      - type: bind
+        source: .
+        target: /com.docker.devenvironments.code
+    working_dir: /com.docker.devenvironments.code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
