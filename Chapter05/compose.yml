@@ -1,0 +1,22 @@
+services:
+  chapter05:
+    entrypoint:
+      - sleep
+      - infinity
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8890:8888"
+    volumes:
+      - type: bind
+        source: .
+        target: /com.docker.devenvironments.code
+    working_dir: /com.docker.devenvironments.code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
