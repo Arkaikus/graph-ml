@@ -1,5 +1,5 @@
 services:
-  chapter05:
+  chapter04:
     entrypoint:
       - sleep
       - infinity
