@@ -5,7 +5,7 @@ services:
       - infinity
     build:
       context: .
-      dockerfile: ../.docker/Dockerfile
+      dockerfile: ../.docker/tensorflow.Dockerfile
     volumes:
       - type: bind
         source: .
