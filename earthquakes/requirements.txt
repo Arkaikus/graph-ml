@@ -1,0 +1,8 @@
+click
+geopy
+node2vec
+pandas
+python-dotenv
+pyyaml
+scikit-learn
+scipy==1.10.1
