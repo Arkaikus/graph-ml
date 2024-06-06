@@ -1,0 +1,22 @@
+services:
+  earthquakes:
+    entrypoint:
+      - sleep
+      - infinity
+    build:
+      context: .
+      dockerfile: ../.docker/nvidia.Dockerfile
+    working_dir: /com.docker.devenvironments.code
+    volumes:
+      - .:/com.docker.devenvironments.code
+      - ../Chapter05:/com.docker.devenvironments.code/Chapter05
+      - vscode-server:/root/.vscode-server
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+volumes:
+  vscode-server:
