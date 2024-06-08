@@ -10,7 +10,7 @@ from processing.data import DataBuilder
 from processing.grid import Grid
 
 from usgs import USGS
-from commands.link_forecast import link_forecast
+from graphs.link_forecast import link_forecast
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
