@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
+from sklearn.preprocessing import MinMaxScaler
 
-from processing.data import DataBuilder
+from processing.data import Data
 from processing.grid import Grid
 
-from usgs import USGS
+from processing.usgs import USGS
 from graphs.link_forecast import link_forecast
 
 logging.basicConfig(level=logging.INFO)
@@ -45,13 +46,14 @@ def edge_list(file, distance):
     latitude, longitude = read_coordinates()
     df = pd.read_csv(file_path)
     grid = Grid(latitude, longitude, distance)
-    processor = DataBuilder(numeric_columns=["latitude", "longitude", "depth", "mag"], time_column=True)
-    logger.info("Processing data")
-    data = processor.build_data(df, grid)
-    nodes = data["node"].values
+    data = Data(df, numeric_columns=["latitude", "longitude", "depth", "mag"], time_column=True)
+    logger.info("Processing data with nodes")
+    result, _ = data.process(grid)
+    nodes = result["node"].values
+
     logger.info("Saving edges list to csv")
-    pd.DataFrame(zip(nodes[:-1], nodes[1:]), columns=["target", "source"]).to_csv(
-        f"csv/edges_{int(distance)}_{processor.hash}.csv", index=False
+    pd.DataFrame(zip(nodes[1:], nodes[:-1]), columns=["target", "source"]).to_csv(
+        f"csv/edges_{int(distance)}_{data.hash}.csv", index=False
     )
 
 

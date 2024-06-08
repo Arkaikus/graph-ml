@@ -10,13 +10,14 @@ from .hash import Hashable
 logger = logging.getLogger(__name__)
 
 
-class DataBuilder(Hashable):
+class Data(Hashable):
     """
-    This class does the cleaning and processing for the .csv catalog
+    Wrapper class to clean and normalize the csv catalog
     """
 
     def __init__(
         self,
+        raw_data: pd.DataFrame,
         numeric_columns: list,
         time_column: bool = False,
         drop_time_column: bool = False,
@@ -44,6 +45,7 @@ class DataBuilder(Hashable):
         min_magnitude : float
             if set filters events with magnitude > min_magnitude
         """
+        self.raw_data = raw_data
         self.numeric_columns = numeric_columns
         self.time_column = time_column
         self.drop_time_column = drop_time_column
@@ -52,9 +54,6 @@ class DataBuilder(Hashable):
         self.min_year = min_year
         self.min_magnitude = min_magnitude
         self.zero_columns = zero_columns
-        self.is_fitted = False
-        self.scalers = {}
-        self.cache_folder = "preprocess_" + self.hash
 
     def clean(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -105,90 +104,62 @@ class DataBuilder(Hashable):
 
         return processed_data.dropna().reset_index(drop=True)
 
-    def normalize(self, data: pd.DataFrame, scaler=MinMaxScaler) -> pd.DataFrame:
+    def normalize(self, clean_data: pd.DataFrame, scaler: MinMaxScaler):
         """
         This method will apply sklearn.MinMaxScaler.fit_transform to the 'numeric_columns'
         of the data argument, the minmaxscaler will be set for later use of inverse_transform
+
+        :params data: dataframe to be normalized
+        :params scaler: sklearn MinMaxScaler or similar
         """
-        processed_data = data.copy()
-        store = Store(self.cache_folder, "scalers_" + self.hash)
-        stored_data = store.load()
-        if stored_data is not None:
-            scalers, columns, is_fitted = stored_data
-            self.scalers = scalers
-            self.numeric_columns = columns
-            self.is_fitted = is_fitted
-            for column in self.scalers:
-                processed_data[column] = pd.DataFrame(self.scalers[column].transform(processed_data[[column]]))
-
-            return processed_data
-
-        for column in processed_data.columns:
+        data = clean_data.copy()
+        scalers = {}
+        for column in data.columns:
             if column in self.numeric_columns:
-                column_scaler = scaler()
-                processed_data[column] = column_scaler.fit_transform(processed_data[[column]])
-                self.scalers[column] = column_scaler
+                data[column] = scaler.fit_transform(data[[column]])
+                scalers[column] = scaler
 
-        self.is_fitted = True
-        store.save((self.scalers, self.numeric_columns, self.is_fitted))
-        return processed_data
+        return data, scalers
 
-    def denormalize(self, data: pd.DataFrame, columns=[]) -> pd.DataFrame:
+    def denormalize(self, normal_data: pd.DataFrame, scalers: dict) -> pd.DataFrame:
         """
-        This method returns the inverse transform of minmaxscaler for the
-        'numeric_columns' in the data argument
+        This method returns the inverse transform for each scaled column
         """
-        processed_data = data.copy()
-        store = Store(self.cache_folder, "scalers_" + self.hash)
-        stored_data = store.load()
-        if stored_data is not None:
-            scalers, _columns, is_fitted = stored_data
-            self.scalers = scalers
-            self.numeric_columns = _columns
-            self.is_fitted = is_fitted
+        data = normal_data.copy()
 
-        if self.is_fitted:
-            for column in columns or _columns:
-                processed_data[column] = self.scalers[column].inverse_transform(data[[column]])
+        for column in self.numeric_columns:
+            scaler: MinMaxScaler = scalers[column]
+            data[column] = scaler.inverse_transform(data[[column]])
 
-            return processed_data
+        return data
 
-        raise Exception("Please run normalize(data) method before trying to denormalize the data")
-
-    def build_data(
-        self,
-        raw_data: pd.DataFrame,
-        grid: Grid,
-        normalize=True,
-    ) -> pd.DataFrame:
+    def process(self, grid: Grid = None, scaler: MinMaxScaler = None):
         """
-        Takes a dataframe with raw_data and applies the cleaning and normalizaiton
+        Runs the cleaning and normalizaiton, against the wrapped data
+        :param grid: (Grid) instance of grid object to handle node tagging
+        :param notmalize: to run
         """
-        prefix = "normalized" if normalize else "cleaned"
-        file_name = f"{prefix}_{self.hash}_{grid.hash}"
-        store = Store(prefix + "_data", file_name)
-        if not store.empty:
-            return store.data
-        else:
-            data = raw_data.copy()
-            data = self.clean(data)
+        data = self.clean(self.raw_data)
+        scalers = None
+
+        if grid:
             data["node"] = grid.apply_node(data)
+            data = data.astype(dict(node=int))
 
-            if normalize:
-                # Insert event with minimum values before index 0
-                min_values_row = data.min().to_frame().transpose()
-                min_values_row["latitude"] = grid.min_latitude
-                min_values_row["longitude"] = grid.min_longitude
+        if scaler:
+            # Insert event with minimum values before index 0
+            min_values_row = data.min().to_frame().transpose()
+            min_values_row["latitude"] = grid.min_latitude
+            min_values_row["longitude"] = grid.min_longitude
 
-                for column in self.zero_columns:
-                    # columns that actually real minimum value is 0
-                    # this helps offseting the minmax scaler
-                    # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
-                    # thus minmaxscaler cannot treat 4.0 as 0.0
-                    min_values_row[column] = 0
-                data = pd.concat([min_values_row, data], ignore_index=True)
-                data = self.normalize(data).drop(0)
+            for column in self.zero_columns:
+                # columns that actually real minimum value is 0
+                # this helps offseting the minmax scaler
+                # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
+                # thus minmaxscaler cannot treat 4.0 as 0.0
+                min_values_row[column] = 0
+            data = pd.concat([min_values_row, data], ignore_index=True)
+            data, scalers = self.normalize(data, scaler)
+            return data.drop(0).reset_index(drop=True), scalers
 
-            data = data.astype(dict(node=int)).reset_index(drop=True)
-            store.save(data)
-            return data
+        return data.reset_index(drop=True), scalers
