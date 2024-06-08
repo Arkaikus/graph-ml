@@ -5,7 +5,7 @@ services:
       - infinity
     build:
       context: .
-      dockerfile: ../.docker/nvidia.Dockerfile
+      dockerfile: Dockerfile
     working_dir: /com.docker.devenvironments.code
     volumes:
       - .:/com.docker.devenvironments.code

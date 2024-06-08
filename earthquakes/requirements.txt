@@ -1,6 +1,7 @@
 click
 geopy
 node2vec
+matplotlib
 pandas
 python-dotenv
 pyyaml
