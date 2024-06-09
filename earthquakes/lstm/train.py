@@ -1,6 +1,6 @@
 import pandas as pd
-import ray
-from ray import tune
+
+from ray import train
 from torch.nn import MSELoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
@@ -20,7 +20,7 @@ def build_trainer(data: pd.DataFrame, target: str, tolerance=5, min_delta=0.0001
         dataset = MovingWindowDataset(data, target, window_size)
         dataloader = DataLoader(dataset, batch_size=config["batch_size"], shuffle=False)
 
-        input_size = (data.shape[1],)  # 0:rows 1:columns
+        input_size = data.shape[1]  # 0:rows 1:columns
         hidden_size = config.get("hidden_size", 1)
         num_layers = config.get("num_layers", 1)
 
@@ -39,7 +39,7 @@ def build_trainer(data: pd.DataFrame, target: str, tolerance=5, min_delta=0.0001
                 epoch_loss += loss.item()
 
             avg_loss = epoch_loss / len(dataloader)
-            tune.report(loss=avg_loss)
+            train.report(dict(loss=epoch_loss, avg_epoch_loss=avg_loss))
             print(f"Epoch {epoch + 1}/{config['num_epochs']}, Loss: {avg_loss:.4f}")
 
     return trainer

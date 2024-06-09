@@ -5,7 +5,6 @@ from sklearn.preprocessing import MinMaxScaler
 
 from .grid import Grid
 from .hash import Hashable
-from .store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class Data(Hashable):
         time_column: bool = False,
         drop_time_column: bool = False,
         delta_time: bool = False,
-        delta_type: str = "timedelta64[D]",
+        delta_type: str = "timedelta64[s]",
         min_year: int = 1973,
         min_magnitude: float = 0,
         zero_columns: list = [],
@@ -38,7 +37,7 @@ class Data(Hashable):
             whether to drop the date/time column from the dataframe after cleaning.
         delta_time : bool, default=False
             if time_column is set create a new column with the time difference between events in delta_type timespan.
-        delta_type : str, default='timedelta64[D]'
+        delta_type : str, default='timedelta64[s]'
             difference in time between events in delta_time.
         min_year : bool
             if time_column is true filters events with year greater than min_year
@@ -90,10 +89,9 @@ class Data(Hashable):
             # If delta_time=True calculates the time difference between events in days by default
             if self.delta_time:
                 self.numeric_columns.append("delta")
-                processed_data["delta"] = (
-                    (processed_data["time"] - processed_data["time"].shift()).astype(self.delta_type).fillna(0)
-                )
-                processed_data["delta"] = pd.to_numeric(processed_data["delta"])
+                delta_values = processed_data["time"] - processed_data["time"].shift()
+                delta_values.at[0] = pd.Timedelta(0)
+                processed_data["delta"] = pd.to_numeric(delta_values.astype("timedelta64[s]"))
                 if "delta" not in self.zero_columns:
                     self.zero_columns.append("delta")
 
@@ -133,7 +131,7 @@ class Data(Hashable):
 
         return data
 
-    def process(self, grid: Grid = None, scaler: MinMaxScaler = None):
+    def process(self, grid: Grid = None, scaler: MinMaxScaler = None, **kwargs):
         """
         Runs the cleaning and normalizaiton, against the wrapped data
         :param grid: (Grid) instance of grid object to handle node tagging
@@ -149,8 +147,11 @@ class Data(Hashable):
         if scaler:
             # Insert event with minimum values before index 0
             min_values_row = data.min().to_frame().transpose()
-            min_values_row["latitude"] = grid.min_latitude
-            min_values_row["longitude"] = grid.min_longitude
+            min_latitude = grid.min_latitude if grid else kwargs.get("min_latitude")
+            min_longitude = grid.min_longitude if grid else kwargs.get("min_longitude")
+            assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in kwargs"
+            min_values_row["latitude"] = float(min_latitude)
+            min_values_row["longitude"] = float(min_longitude)
 
             for column in self.zero_columns:
                 # columns that actually real minimum value is 0

@@ -12,10 +12,10 @@ class MovingWindowDataset(Dataset):
     def create_sequences(self, df: pd.DataFrame, target: str, window_size):
         inputs, targets = [], []
         for i in range(df.shape[0] - window_size):
-            input_seq = df.at[i : i + window_size].values
-            target = df.at[i + window_size, target].values
+            input_seq = df.iloc[i : i + window_size].values
+            target_v = df.at[i + window_size, target]
             inputs.append(input_seq)
-            targets.append(target)
+            targets.append(target_v)
         return inputs, targets
 
     def __len__(self):
