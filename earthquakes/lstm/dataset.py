@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
@@ -16,7 +17,7 @@ class MovingWindowDataset(Dataset):
             target_v = df.at[i + window_size, target]
             inputs.append(input_seq)
             targets.append(target_v)
-        return inputs, targets
+        return np.array(inputs), np.array(targets)
 
     def __len__(self):
         return len(self.inputs)
