@@ -6,9 +6,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    working_dir: /com.docker.devenvironments.code
+    working_dir: /earthquakes
     volumes:
-      - .:/com.docker.devenvironments.code
+      - .:/earthquakes
       - vscode-server:/root/.vscode-server
     deploy:
       resources:
