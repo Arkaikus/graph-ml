@@ -1,4 +1,3 @@
-import os
 import traceback
 from hashlib import md5
 from pathlib import Path

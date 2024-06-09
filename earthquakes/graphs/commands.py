@@ -1,0 +1,33 @@
+import logging
+from pathlib import Path
+
+import click
+import pandas as pd
+
+from processing.data import Data
+from processing.grid import Grid
+from settings import read_coordinates
+
+logger = logging.getLogger(__name__)
+
+
+@click.command()
+@click.option("-f", "--file", type=str, help="Catalog csv file to turn into edge list")
+@click.option("-d", "--distance", type=float, help="Distance in km for the grid cell size", default=100)
+def edge_list(file, distance):
+    """Convert catalog csv file to edge list"""
+    file_path = Path(file)
+    assert file_path.exists()
+
+    latitude, longitude = read_coordinates()
+    df = pd.read_csv(file_path)
+    grid = Grid(latitude, longitude, distance)
+    data = Data(df, numeric_columns=["latitude", "longitude", "depth", "mag"], time_column=True)
+    logger.info("Processing data with nodes")
+    result, _ = data.process(grid)
+    nodes = result["node"].values
+
+    logger.info("Saving edges list to csv")
+    pd.DataFrame(zip(nodes[1:], nodes[:-1]), columns=["target", "source"]).to_csv(
+        f"csv/edges_{int(distance)}_{data.hash}.csv", index=False
+    )
