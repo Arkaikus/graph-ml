@@ -2,7 +2,7 @@ import click
 
 from graphs.commands import edge_list
 from graphs.link_forecast import link_forecast
-from lstm.command import train_lstm
+from lstm.commands import train_lstm
 from processing.commands import download_usgs
 
 
