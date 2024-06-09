@@ -1,8 +1,8 @@
 import os
 import traceback
 from hashlib import md5
-from urllib.parse import urlencode
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pandas as pd
 

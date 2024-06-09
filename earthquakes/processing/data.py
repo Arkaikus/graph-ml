@@ -3,9 +3,9 @@ import logging
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
-from .store import Store
 from .grid import Grid
 from .hash import Hashable
+from .store import Store
 
 logger = logging.getLogger(__name__)
 
