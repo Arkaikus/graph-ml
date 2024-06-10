@@ -14,18 +14,14 @@ from settings import read_coordinates
 logger = logging.getLogger(__name__)
 
 
-@click.command()
-@click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
-@click.option("-t", "--target", type=str, help="target in the given dataset to forecast")
-def train_lstm(file, target):
-    """Reads a processed .csv catalog and trains an LSTM neural network"""
+def prepare_data(file, target):
+    """Takes a file path and a target column to process the data"""
     raw_data = pd.read_csv(file)
-
     data = Data(
         raw_data,
         numeric_columns=["latitude", "longitude", "depth", "mag"],
         time_column=True,
-        delta_time=True,
+        delta_time=click.confirm("Calculate days between?", default=False),
         drop_time_column=True,
     )
     logger.info("Processing data")
@@ -34,10 +30,27 @@ def train_lstm(file, target):
 
     if not target:
         target = click.prompt("Target of [{}]".format(",".join(ready_data.columns)))
+        assert target
     assert target in raw_data.columns, f"[{target}] not in data"
+    return ready_data
+
+
+@click.command()
+@click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
+@click.option("-t", "--target", type=str, help="target in the given dataset to forecast", default="mag")
+def tune_lstm(file, target):
+    """Reads a processed .csv catalog and trains an LSTM neural network"""
+    data = prepare_data(file, target)
 
     logger.info("Preparing trainer")
-    trainer = build_trainer(ready_data, target)
+    trainer = build_trainer(data, target)
+
+    import pdb
+
+    pdb.set_trace()
+
+    t = trainer({"window_size": 10, "hidden_size": 1, "num_layers": 1, "lr": 0.0001, "batch_size": 1, "num_epochs": 1})
+
     # Define the search space for hyperparameters
     config = {
         "window_size": tune.choice([50, 100, 200]),

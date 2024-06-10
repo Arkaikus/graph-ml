@@ -6,6 +6,7 @@ from torch.utils.data import Dataset
 
 class MovingWindowDataset(Dataset):
     def __init__(self, df: pd.DataFrame, target: str, window_size):
+        assert target, "[target] cannot be None"
         self.inputs, self.targets = self.create_sequences(df, target, window_size)
         self.inputs = torch.tensor(self.inputs, dtype=torch.float32)
         self.targets = torch.tensor(self.targets, dtype=torch.float32)

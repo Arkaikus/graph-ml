@@ -2,7 +2,7 @@ import click
 
 from graphs.commands import edge_list
 from graphs.link_forecast import link_forecast
-from lstm.commands import train_lstm
+from lstm.commands import tune_lstm
 from processing.commands import download_usgs
 
 
@@ -11,7 +11,7 @@ def main():
     group.add_command(download_usgs)
     group.add_command(edge_list)
     group.add_command(link_forecast)
-    group.add_command(train_lstm)
+    group.add_command(tune_lstm)
     group()
 
 
