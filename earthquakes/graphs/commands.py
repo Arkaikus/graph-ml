@@ -6,6 +6,7 @@ import pandas as pd
 
 from processing.data import Data
 from processing.grid import Grid
+from .link_prediction import run_link_prediction
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
@@ -31,3 +32,15 @@ def edge_list(file, distance):
     pd.DataFrame(zip(nodes[1:], nodes[:-1]), columns=["target", "source"]).to_csv(
         f"csv/edges_{int(distance)}_{data.hash}.csv", index=False
     )
+
+
+@click.command()
+@click.option("-f", "--file", type=str, help="Csv containing a list of graph edges")
+def link_prediction(file):
+    """
+    Takes an edge_list generated .csv file and runs the Stamille's Graph Machine Learning Book, Link prediciton algorithm
+    """
+    acc, recall, f1 = run_link_prediction(file)
+    print("Precission", acc)
+    print("Recall", recall)
+    print("F1 score", f1)
