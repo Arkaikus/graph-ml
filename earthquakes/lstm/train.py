@@ -1,5 +1,4 @@
 import pandas as pd
-
 from ray import train
 from torch.nn import MSELoss
 from torch.optim import Adam

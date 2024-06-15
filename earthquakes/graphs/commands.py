@@ -6,8 +6,9 @@ import pandas as pd
 
 from processing.data import Data
 from processing.grid import Grid
-from .link_prediction import run_link_prediction
 from settings import read_coordinates
+
+from .link_prediction import run_link_prediction
 
 logger = logging.getLogger(__name__)
 

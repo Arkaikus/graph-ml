@@ -8,7 +8,6 @@ from sklearn.preprocessing import MinMaxScaler
 
 from lstm.train import build_trainer
 from processing.data import Data
-
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)

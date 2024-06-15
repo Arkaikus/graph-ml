@@ -1,18 +1,19 @@
-import logging, pdb
+import logging
+import pdb
 from pathlib import Path
+
 import networkx as nx
-import pandas as pd
 import numpy as np
+import pandas as pd
+from gensim.models import Word2Vec
 from node2vec import Node2Vec
 from node2vec.edges import HadamardEmbedder
 from sklearn import metrics
-from sklearn.utils.validation import check_is_fitted
 from sklearn.ensemble import RandomForestClassifier
-from gensim.models import Word2Vec
 
-from .edge_splitter import EdgeSplitter
 from processing.store import Store
 
+from .edge_splitter import EdgeSplitter
 
 logger = logging.getLogger(__name__)
 
