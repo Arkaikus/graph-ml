@@ -30,7 +30,10 @@ def edge_list(file, distance):
     nodes = result["node"].values
 
     logger.info("Saving edges list to csv")
-    pd.DataFrame(zip(nodes[1:], nodes[:-1]), columns=["target", "source"]).to_csv(
+    # nodes are ordered by time 0->1 means 1 happened after 0
+    # source nodes[:-1] takes from 0 to n-1
+    # target nodes[1:] takes from 1 to n
+    pd.DataFrame(zip(nodes[:-1], nodes[1:]), columns=["source", "target"]).to_csv(
         f"csv/edges_{int(distance)}_{data.hash}.csv", index=False
     )
 
@@ -41,7 +44,8 @@ def link_prediction(file):
     """
     Takes an edge_list generated .csv file and runs the Stamille's Graph Machine Learning Book, Link prediciton algorithm
     """
-    acc, recall, f1 = run_link_prediction(file, test_size=0.5)
+    roc, acc, recall, f1 = run_link_prediction(file, test_size=0.3)
+    print("ROC AUC score", roc)
     print("Precission", acc)
     print("Recall", recall)
     print("F1 score", f1)

@@ -1,5 +1,4 @@
 import logging
-import pdb
 from pathlib import Path
 
 import networkx as nx
@@ -57,7 +56,7 @@ def run_link_prediction(file: str, test_size, embedder_class=HadamardEmbedder, *
     assert "target" in edge_list.columns
 
     logger.info("Splitting data into train and test with EdgeSplitter")
-    graph: nx.Graph = nx.from_pandas_edgelist(edge_list)
+    graph: nx.DiGraph = nx.from_pandas_edgelist(edge_list, create_using=nx.DiGraph)
 
     logger.info("Training/loading node2vec model")
     # .fit() will walk the graph, then run index2words from the walks
@@ -80,17 +79,18 @@ def run_link_prediction(file: str, test_size, embedder_class=HadamardEmbedder, *
     print("Train dataset", train_samples.shape, train_labels.shape)
     print("Test dataset", test_samples.shape, test_labels.shape)
 
-    logger.info("Querying embeddings")
+    logger.info("Querying %s vectors", embedder_class.__name__)
     embeddings = embedder_class(keyed_vectors=n2v_train.wv)
-    train_embeddings = np.array([embeddings[u, v] for u, v in train_samples])
-    test_embeddings = np.array([embeddings[u, v] for u, v in test_samples])
+    train_vectors = np.array([embeddings[u, v] for u, v in train_samples])
+    test_vectors = np.array([embeddings[u, v] for u, v in test_samples])
 
     logger.info("Training RandomForestClassifier")
-    rfn = file_path.stem + f"_test:{test_size}" + n2v_params
-    rf = train_randomforest(train_embeddings, train_labels, rfn)
-    y_pred = rf.predict(test_embeddings)
+    rfn = file_path.stem + embedder_class.__name__ + f"_test:{test_size}" + n2v_params
+    rf = train_randomforest(train_vectors, train_labels, rfn)
+    y_pred = rf.predict(test_vectors)
 
     return (
+        metrics.roc_auc_score(test_labels, y_pred),
         metrics.precision_score(test_labels, y_pred),
         metrics.recall_score(test_labels, y_pred),
         metrics.f1_score(test_labels, y_pred),

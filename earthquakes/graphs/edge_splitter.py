@@ -1,9 +1,5 @@
 # Taken and adapted from https://github.com/stellargraph/stellargraph/blob/develop/stellargraph/data/edge_splitter.py
 
-import datetime
-import warnings
-from math import isclose
-
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -49,7 +45,7 @@ class EdgeSplitter:
         self.negative_edges_labels = None
         self._random = np.random.RandomState(seed=None)
 
-    def ttt_global(self, g: nx.Graph, g_master: nx.Graph, p):
+    def ttt_global(self, g: nx.DiGraph, g_master: nx.DiGraph, p):
         """
         Method for edge splitting applied to homogeneous graphs.
 
@@ -73,7 +69,7 @@ class EdgeSplitter:
         self.positive_edges_labels = np.array(df.iloc[:, 2])
 
         # method global
-        negative_edges = self.sample_negative_global(g, g_master, p=p, limit_samples=len(positive_edges))
+        negative_edges = self.sample_negative(g, g_master, p=p, limit_samples=len(positive_edges))
 
         df = pd.DataFrame(negative_edges)
         self.negative_edges_ids = np.array(df.iloc[:, 0:2])
@@ -94,7 +90,7 @@ class EdgeSplitter:
 
         return reduced_graph, edge_samples, label_samples
 
-    def train_test_split(self, graph: nx.Graph, test_size=0.5, seed=None):
+    def train_test_split(self, graph: nx.DiGraph, test_size=0.5, seed=None):
         """
         Generates positive and negative edges and a graph that has the same nodes as the original but the positive
         edges removed. It can be used to generate data from homogeneous graphs.
@@ -122,7 +118,7 @@ class EdgeSplitter:
         _, train_edge_data, train_edge_labels = self.ttt_global(reduced_graph, graph, p=1)  # take the rest
         return train_edge_data, train_edge_labels, test_edge_data, test_edge_labels
 
-    def sample_negative_global(self, graph: nx.Graph, graph_master, p=0.5, limit_samples=None):
+    def sample_negative(self, graph: nx.DiGraph, graph_master, p=0.5, limit_samples=None):
         """
         This method samples uniformly at random nodes from the graph and, if they don't have an edge in the graph,
         it records the pair as a negative edge.
@@ -146,11 +142,8 @@ class EdgeSplitter:
         else:
             edges = list(graph_master.edges())
 
-        # to speed up lookup of edges in edges list, create a set the values stored are the concatenation of
-        # the source and target node ids.
-        edges_set = set(edges)
-        edges_set.update({(v, u) for u, v in edges})
-        sampled_edges_set = set()
+        directed_edges = set(edges)
+        sampled_edges_set = {}
 
         start_nodes = list(graph.nodes(data=False))
         end_nodes = list(graph.nodes(data=False))
@@ -162,12 +155,14 @@ class EdgeSplitter:
         for _ in np.arange(0, num_iter):
             self._random.shuffle(start_nodes)
             self._random.shuffle(end_nodes)
-            for u, v in zip(start_nodes, end_nodes):
-                if (u != v) and ((u, v) not in edges_set) and ((u, v) not in sampled_edges_set):
-                    sampled_edges.append((u, v, 0))  # the last entry is the class label
-                    sampled_edges_set.update({(u, v), (v, u)})  # test for bi-directional edges
-                    count += 1
-                if count == num_edges_to_sample:
+            for start, end in zip(start_nodes, end_nodes):
+                for u, v in {(start, end), (end, start)}:  # check both directions
+                    if (u != v) and ((u, v) not in directed_edges) and ((u, v) not in sampled_edges_set):
+                        sampled_edges.append((u, v, 0))
+                        sampled_edges_set.update({(u, v)})
+                        count += 1
+
+                if count >= num_edges_to_sample:
                     return sampled_edges
 
         if len(sampled_edges) != num_edges_to_sample:
