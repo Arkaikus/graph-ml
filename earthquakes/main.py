@@ -1,17 +1,15 @@
 import click
 
-from graphs.commands import edge_list
-from graphs.commands import link_prediction
-from lstm.commands import tune_lstm
-from processing.commands import download_usgs
+from graphs.commands import graphs_group
+from lstm.commands import lstm_group
+from processing.commands import usgs_group
 
 
 def main():
     group = click.Group()
-    group.add_command(download_usgs)
-    group.add_command(edge_list)
-    group.add_command(link_prediction)
-    group.add_command(tune_lstm)
+    group.add_command(graphs_group)
+    group.add_command(lstm_group)
+    group.add_command(usgs_group)
     group()
 
 

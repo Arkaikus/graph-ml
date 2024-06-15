@@ -40,7 +40,12 @@ def link_prediction(file):
     """
     Takes an edge_list generated .csv file and runs the Stamille's Graph Machine Learning Book, Link prediciton algorithm
     """
-    acc, recall, f1 = run_link_prediction(file)
+    acc, recall, f1 = run_link_prediction(file, test_size=0.5)
     print("Precission", acc)
     print("Recall", recall)
     print("F1 score", f1)
+
+
+graphs_group = click.Group("graphs", help="tools to train with graphs")
+graphs_group.add_command(edge_list)
+graphs_group.add_command(link_prediction)
