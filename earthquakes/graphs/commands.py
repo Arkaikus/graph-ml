@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 import pandas as pd
 
-from processing.data import Data
+from processing.data import EarthquakeData
 from processing.grid import Grid
 from settings import read_coordinates
 
@@ -24,7 +24,7 @@ def edge_list(file, distance):
     latitude, longitude = read_coordinates()
     df = pd.read_csv(file_path)
     grid = Grid(latitude, longitude, distance)
-    data = Data(df, numeric_columns=["latitude", "longitude", "depth", "mag"], time_column=True)
+    data = EarthquakeData(df, numeric_columns=["latitude", "longitude", "depth", "mag"], time_column=True)
     logger.info("Processing data with nodes")
     result, _ = data.process(grid)
     nodes = result["node"].values

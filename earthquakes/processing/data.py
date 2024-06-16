@@ -1,7 +1,7 @@
 import logging
 
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 from .grid import Grid
 from .hash import Hashable
@@ -9,7 +9,7 @@ from .hash import Hashable
 logger = logging.getLogger(__name__)
 
 
-class Data(Hashable):
+class EarthquakeData(Hashable):
     """
     Wrapper class to clean and normalize the csv catalog
     """
@@ -25,6 +25,9 @@ class Data(Hashable):
         min_year: int = 1973,
         min_magnitude: float = 0,
         zero_columns: list = [],
+        scaler_mode="standard",
+        min_latitude=None,
+        min_longitude=None,
     ):
         """
         Parameters
@@ -53,6 +56,16 @@ class Data(Hashable):
         self.min_year = min_year
         self.min_magnitude = min_magnitude
         self.zero_columns = zero_columns
+
+        modes = {
+            "standard": StandardScaler,
+            "minmax": MinMaxScaler,
+        }
+        assert scaler_mode in modes
+        self.scaler_mode = scaler_mode
+        self.scaler_class = modes.get(scaler_mode)
+        self.min_latitude = min_latitude
+        self.min_longitude = min_longitude
 
     def clean(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -102,7 +115,7 @@ class Data(Hashable):
 
         return processed_data.dropna().reset_index(drop=True)
 
-    def normalize(self, clean_data: pd.DataFrame, scaler: MinMaxScaler):
+    def normalize(self, clean_data: pd.DataFrame):
         """
         This method will apply sklearn.MinMaxScaler.fit_transform to the 'numeric_columns'
         of the data argument, the minmaxscaler will be set for later use of inverse_transform
@@ -114,6 +127,7 @@ class Data(Hashable):
         scalers = {}
         for column in data.columns:
             if column in self.numeric_columns:
+                scaler = self.scaler_class()
                 data[column] = scaler.fit_transform(data[[column]])
                 scalers[column] = scaler
 
@@ -131,7 +145,7 @@ class Data(Hashable):
 
         return data
 
-    def process(self, grid: Grid = None, scaler: MinMaxScaler = None, **kwargs):
+    def process(self, grid: Grid = None):
         """
         Runs the cleaning and normalizaiton, against the wrapped data
         :param grid: (Grid) instance of grid object to handle node tagging
@@ -144,23 +158,20 @@ class Data(Hashable):
             data["node"] = grid.apply_node(data)
             data = data.astype(dict(node=int))
 
-        if scaler:
-            # Insert event with minimum values before index 0
-            min_values_row = data.min().to_frame().transpose()
-            min_latitude = grid.min_latitude if grid else kwargs.get("min_latitude")
-            min_longitude = grid.min_longitude if grid else kwargs.get("min_longitude")
-            assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in kwargs"
-            min_values_row["latitude"] = float(min_latitude)
-            min_values_row["longitude"] = float(min_longitude)
+        # Insert event with minimum values before index 0
+        min_values_row = data.min().to_frame().transpose()
+        min_latitude = grid.min_latitude if grid else self.min_latitude
+        min_longitude = grid.min_longitude if grid else self.min_longitude
+        assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
+        min_values_row["latitude"] = float(min_latitude)
+        min_values_row["longitude"] = float(min_longitude)
 
-            for column in self.zero_columns:
-                # columns that actually real minimum value is 0
-                # this helps offseting the minmax scaler
-                # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
-                # thus minmaxscaler cannot treat 4.0 as 0.0
-                min_values_row[column] = 0
-            data = pd.concat([min_values_row, data], ignore_index=True)
-            data, scalers = self.normalize(data, scaler)
-            return data.drop(0).reset_index(drop=True), scalers
-
-        return data.reset_index(drop=True), scalers
+        for column in self.zero_columns:
+            # columns that actually real minimum value is 0
+            # this helps offseting the minmax scaler
+            # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
+            # thus minmaxscaler cannot treat 4.0 as 0.0
+            min_values_row[column] = 0
+        data = pd.concat([min_values_row, data], ignore_index=True)
+        data, scalers = self.normalize(data)
+        return data.drop(0).reset_index(drop=True), scalers
