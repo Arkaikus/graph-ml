@@ -1,15 +1,19 @@
 services:
   earthquakes:
+    user: arkaikus
     entrypoint:
       - sleep
       - infinity
     build:
       context: .
       dockerfile: Dockerfile
-    working_dir: /earthquakes
+      args:
+        - USER=arkaikus
+        - USER_ID=1000
+        - GROUP_ID=1000
+    working_dir: /home/arkaikus/earthquakes
     volumes:
-      - .:/earthquakes
-      - vscode-server:/root/.vscode-server
+      - .:/home/arkaikus/earthquakes
     deploy:
       resources:
         reservations:
