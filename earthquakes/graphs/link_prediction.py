@@ -10,7 +10,7 @@ from node2vec.edges import HadamardEmbedder
 from sklearn import metrics
 from sklearn.ensemble import RandomForestClassifier
 
-from processing.store import Store
+from data.store import Store
 
 from .edge_splitter import EdgeSplitter
 

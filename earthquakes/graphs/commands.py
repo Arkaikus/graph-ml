@@ -4,8 +4,8 @@ from pathlib import Path
 import click
 import pandas as pd
 
-from processing.data import EarthquakeData
-from processing.grid import Grid
+from data.data import EarthquakeData
+from data.grid import Grid
 from settings import read_coordinates
 
 from .link_prediction import run_link_prediction

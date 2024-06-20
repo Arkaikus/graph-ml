@@ -4,13 +4,11 @@ import click
 import pandas as pd
 from ray import tune
 from ray.data import from_pandas
-from ray.train import RunConfig, ScalingConfig
-from ray.tune.tuner import Tuner
+from ray.train import RunConfig
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from lstm.trainable import LSTMTrainable, test_model
-from processing.data import EarthquakeData
+from data.data import EarthquakeData
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)

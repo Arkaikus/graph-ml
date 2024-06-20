@@ -2,7 +2,7 @@ import click
 
 from graphs.commands import graphs_group
 from lstm.commands import lstm_group
-from processing.commands import usgs_group
+from data.commands import usgs_group
 
 
 def main():

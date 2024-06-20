@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import torch
 from pathlib import Path
-from ray import tune, train
+from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from torch.nn import MSELoss
