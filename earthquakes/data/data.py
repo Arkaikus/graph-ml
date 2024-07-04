@@ -61,7 +61,6 @@ class EarthquakeData(Hashable):
             "standard": StandardScaler,
             "minmax": MinMaxScaler,
         }
-        assert scaler_mode in modes
         self.scaler_mode = scaler_mode
         self.scaler_class = modes.get(scaler_mode)
         self.min_latitude = min_latitude
@@ -125,11 +124,14 @@ class EarthquakeData(Hashable):
         """
         data = clean_data.copy()
         scalers = {}
-        for column in data.columns:
-            if column in self.numeric_columns:
-                scaler = self.scaler_class()
-                data[column] = scaler.fit_transform(data[[column]])
-                scalers[column] = scaler
+        if self.scaler_class:
+            for column in data.columns:
+                if column in self.numeric_columns:
+                    scaler = self.scaler_class()
+                    data[column] = scaler.fit_transform(data[[column]])
+                    scalers[column] = scaler
+        else:
+            logger.warning("No scaler class detected")
 
         return data, scalers
 
@@ -152,7 +154,6 @@ class EarthquakeData(Hashable):
         :param notmalize: to run
         """
         data = self.clean(self.raw_data)
-        scalers = None
 
         if grid:
             data["node"] = grid.apply_node(data)
