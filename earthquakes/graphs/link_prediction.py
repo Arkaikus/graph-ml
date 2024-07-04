@@ -85,7 +85,7 @@ def run_link_prediction(file: str, test_size, embedder_class=HadamardEmbedder, *
     test_vectors = np.array([embeddings[u, v] for u, v in test_samples])
 
     logger.info("Training RandomForestClassifier")
-    rfn = file_path.stem + embedder_class.__name__ + f"_test:{test_size}" + n2v_params
+    rfn = f"{file_path.stem}_{embedder_class.__name__}_test:{test_size}_{n2v_params}"
     rf = train_randomforest(train_vectors, train_labels, rfn)
     y_pred = rf.predict(test_vectors)
 
