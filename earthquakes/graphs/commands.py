@@ -24,7 +24,12 @@ def edge_list(file, distance):
     latitude, longitude = read_coordinates()
     df = pd.read_csv(file_path)
     grid = Grid(latitude, longitude, distance)
-    data = EarthquakeData(df, numeric_columns=["latitude", "longitude", "depth", "mag"], time_column=True)
+    data = EarthquakeData(
+        df,
+        numeric_columns=["latitude", "longitude", "depth", "mag"],
+        time_column=True,
+        scaler_mode=None,
+    )
     logger.info("Processing data with nodes")
     result, _ = data.process(grid)
     nodes = result["node"].values
@@ -36,6 +41,7 @@ def edge_list(file, distance):
     pd.DataFrame(zip(nodes[:-1], nodes[1:]), columns=["source", "target"]).to_csv(
         f"csv/edges_{int(distance)}_{data.hash}.csv", index=False
     )
+    result.to_csv(f"csv/clean_{int(distance)}_{data.hash}.csv", index=False)
 
 
 @click.command()
