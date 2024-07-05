@@ -1,63 +1,86 @@
-import logging
+import logging, pdb
 import os
 import pandas as pd
+import numpy as np
 import torch
 from pathlib import Path
+from functools import cached_property
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from torch.nn import MSELoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-from .dataset import MovingWindowDataset
+from .dataset import SequencesDataset, create_sequences
 from .model import LSTMModel
 
 logger = logging.getLogger(__name__)
 
-CHECKPOINT_DIR = Path(os.getcwd()) / "checkpoints"
-
 
 class LSTMTrainable(tune.Trainable):
     def setup(self, config: dict):
+        logging.basicConfig(level=logging.INFO)
+        self.config = config
+        self.logger = logging.getLogger(self.trial_id)
         """takes hyperparameter values in the config argument"""
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
+        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         data: pd.DataFrame = config.get("data")  # Load your data here
         target: str = config.get("target")  # Set your target column name
-        seq_length = config.get("window_size")
-        dataset = MovingWindowDataset(data, target, seq_length, device)
-        self.dataloader = DataLoader(dataset, batch_size=config["batch_size"], shuffle=False)
+        sequence_size = config.get("sequence_size")
+        test_size = config.get("test_size")
+
+        assert target, "[target] cannot be None"
+        assert sequence_size, "[sequence_size] cannot be None"
+
+        # prepare train test split of data
+        (
+            self.train_sequences,
+            self.test_sequences,
+            self.train_targets,
+            self.test_targets,
+        ) = create_sequences(data, target, sequence_size, test_size)
 
         feature_size = data.shape[1]  # 0:seq 1:features
         hidden_size = config.get("hidden_size", 1)
         num_layers = config.get("num_layers", 1)
 
-        self.model = LSTMModel(feature_size, hidden_size, num_layers, 1).to(device)
+        self.model = LSTMModel(feature_size, hidden_size, num_layers, 1).to(self.device)
         self.loss = MSELoss()
         self.optimizer = Adam(self.model.parameters(), lr=config["lr"])
 
-    def step(self):
+    @cached_property
+    def train_dataloader(self):
+        self.train_dataset = SequencesDataset(self.train_sequences, self.train_targets)
+        return DataLoader(self.train_dataset, batch_size=self.config["batch_size"], shuffle=False)
 
+    @cached_property
+    def test_dataloader(self):
+        self.test_dataset = SequencesDataset(self.test_sequences, self.test_targets)
+        return DataLoader(self.test_dataset, batch_size=self.config["batch_size"], shuffle=False)
+
+    def step(self):
         epoch_loss = 0
-        for inputs, targets in self.dataloader:
-            outputs = self.model(inputs)
-            loss = self.loss(outputs, targets)
+        for inputs, outputs in self.train_dataloader:
+            forecast = self.model(inputs.to(torch.float32).to(self.device))
+            loss = self.loss(forecast, outputs.to(torch.float32).to(self.device))
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             epoch_loss += loss.item()
 
-        mean_loss = epoch_loss / len(self.dataloader)
+        mean_loss = epoch_loss / len(self.train_dataloader)
         return {"loss": epoch_loss, "mean_loss": mean_loss}
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
-        logger.info("Saving checkpoint to %s", checkpoint_dir)
+        self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
+        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint.pth")
         state = (self.model.state_dict(), self.optimizer.state_dict())
-        torch.save(state, checkpoint_dir)
+        torch.save(state, checkpoint_path)
 
     def load_checkpoint(self, checkpoint: Checkpoint):
+        self.logger.info("Loading checkpoint %s", checkpoint)
         with checkpoint.as_directory() as loaded_checkpoint_dir:
             logger.info("Loading checkpoint %s", loaded_checkpoint_dir)
             checkpoint_path = os.path.join(loaded_checkpoint_dir, "checkpoint.pth")
@@ -66,34 +89,51 @@ class LSTMTrainable(tune.Trainable):
             self.optimizer.load_state_dict(optimizer_state)
 
 
-def test_model(result: Result, test_data: pd.DataFrame, target: str):
+def test_model(result: Result, target_scaler):
     logger.info("Loading testing from config")
-    seq_length = result.config["window_size"]
-    batch_size = result.config["batch_size"]
+    trainable = LSTMTrainable(config=result.config)
+    best_checkpoint = result.get_best_checkpoint("loss", "min")
+    trainable.load_checkpoint(best_checkpoint)
 
-    assert seq_length, "seq_length is empty"
-    testset = MovingWindowDataset(test_data, target, seq_length)
-    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
-
-    feature_size = test_data.shape[1]  # 0:seq 1:features
-    hidden_size = result.config["hidden_size"]
-    num_layers = result.config["num_layers"]
-    assert hidden_size, "hiden_size is empty"
-    assert num_layers, "num_layers is empty"
-
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    trained_model = LSTMModel(feature_size, hidden_size, num_layers, 1).to(device)
-
-    checkpoint_path = Path(result.checkpoint.to_directory()) / "checkpoint.pth"
-    model_state, optimizer_state = torch.load(checkpoint_path)
-    trained_model.load_state_dict(model_state)
-
+    original = []
     forecast = []
-    with torch.no_grad():
-        for data in testloader:
-            sequences, targets = data
-            sequences, targets = sequences.to(device), targets.to(device)
-            (output,) = trained_model(sequences)
-            forecast.append(output)
 
-    logger.info("Best trial testset MSE: %s", mean_squared_error(testset.targets, forecast))
+    with torch.no_grad():
+        for data in trainable.test_dataloader:
+            inputs, outputs = data
+            original.append(outputs)
+            model_output = trainable.model(inputs.to(torch.float32).to(trainable.device))
+            forecast.append(model_output.cpu())
+
+    original = np.vstack(original)
+    forecast = np.vstack(forecast)
+
+    print(result.metrics_dataframe)
+
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    import seaborn as sns
+
+    sns.set_theme(style="darkgrid")
+
+    _original = target_scaler.inverse_transform(original)
+    _forecast = target_scaler.inverse_transform(forecast)
+    logger.info("Best trial R2 %s", r2_score(original.squeeze(), forecast.squeeze()))
+    logger.info("Best trial MSE: %s", mean_squared_error(original.squeeze(), forecast.squeeze()))
+    logger.info("Best trial MAE: %s", mean_absolute_error(original.squeeze(), forecast.squeeze()))
+
+    hstack = np.hstack((_original, _forecast))
+    logger.info("Hstack %s", hstack.shape)
+
+    g = sns.jointplot(
+        x="Real",
+        y="Forecast",
+        data=pd.DataFrame(hstack, columns=["Real", "Forecast"]),
+        kind="reg",
+        truncate=False,
+        color="m",
+        height=7,
+    )
+
+    plt.gcf().savefig(Path(result.path) / "forecast.png")
