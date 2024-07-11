@@ -2,43 +2,59 @@ import logging, pdb
 import os
 import click
 import pandas as pd
+from dotenv import load_dotenv
+
+
 from pathlib import Path
 from ray import tune
-from ray.train import Result
+from ray.tune import ResultGrid, ExperimentAnalysis
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
-from lstm.trainable import LSTMTrainable, test_model
+from lstm.trainable import LSTMTrainable, test_result
 from data.data import EarthquakeData
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
 
-experiment_path = Path(os.getcwd()) / "ray_results"
-experiment_path.mkdir(exist_ok=True)
+
+def load_data(file: str, env: str) -> EarthquakeData:
+    load_dotenv(env, override=True)
+    file_path = file or os.getenv("FILE_PATH")
+    assert file_path, "FILE_PATH was not provided"
+    raw_data = pd.read_csv(file_path)
+    latitude, longitude = read_coordinates()
+    numeric_columns = os.getenv("NUMERIC_COLUMNS", "").split(",")
+    zero_columns = os.getenv("ZERO_COLUMNS", "").split(",")
+    numeric_columns = [col for col in numeric_columns if col]
+    zero_columns = [col for col in zero_columns if col]
+    time_column = os.getenv("TIME_COLUMN", "true").lower() == "true"
+    delta_time = os.getenv("DELTA_TIME", "true").lower() == "true"
+    drop_time = os.getenv("DROP_TIME", "true").lower() == "true"
+
+    return EarthquakeData(
+        raw_data,
+        numeric_columns=numeric_columns,
+        zero_columns=zero_columns,  # can be zero when scaling
+        time_column=time_column,
+        delta_time=delta_time,
+        drop_time_column=drop_time,
+        min_latitude=min(latitude),
+        min_longitude=min(longitude),
+    )
 
 
 @click.command(name="tune")
 @click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
-@click.option("-t", "--target", type=str, help="target in the given dataset to forecast", default="mag")
-@click.option("-dt", "--deltatime", type=bool, help="include delta time events", default=True)
-def tune_command(file, target, deltatime):
+@click.option("-t", "--target", type=str, help="target in the given dataset to forecast")
+@click.option("-e", "--env", type=str, help="path to .env file with variables to be loaded", default="./.env")
+def tune_command(file, target, env):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
-    raw_data = pd.read_csv(file)
-    latitude, longitude = read_coordinates()
-    qdata = EarthquakeData(
-        raw_data,
-        numeric_columns=["latitude", "longitude", "depth", "mag"],
-        zero_columns=["depth", "mag"],  # can be zero when scaling
-        time_column=True,
-        delta_time=deltatime,
-        drop_time_column=True,
-        min_latitude=min(latitude),
-        min_longitude=min(longitude),
-    )
+    qdata = load_data(file, env)
     logger.info("Processing data...")
     data, scalers = qdata.process()
 
-    if not target:
+    target = target or os.getenv("TARGET")
+    if not target or not target in data.columns:
         target = click.prompt("Target of [{}]".format(",".join(data.columns)))
         assert target
     assert target in data.columns, f"[{target}] not in data"
@@ -63,25 +79,42 @@ def tune_command(file, target, deltatime):
 
     logger.info("Results path at %s", results.experiment_path)
     best_result = results.get_best_result("loss", "min")
-    test_model(best_result, scalers.get(target))
+    test_result(best_result, scalers.get(target))
 
 
 @click.command(name="test")
-@click.option("-r", "--result-path", type=str, help="result path", default=None)
-def test_command(result_path):
-    if not result_path:
+@click.option("-ex", "--experiment-path", type=str, help="experiment path", default=None)
+@click.option("-t", "--target", type=str, help="target in the given dataset to forecast")
+@click.option("-e", "--env", type=str, help="env path", default=None)
+def test_command(experiment_path, target, env):
+    load_dotenv(env, override=True)
+    if not experiment_path:
         ray_results = Path.home() / "ray_results"
-        choices = {idx: folder for idx, folder in enumerate(os.listdir(ray_results.as_posix()))}
-        choice = click.prompt("\n".join(f"{idx}) {folder}" for idx, folder in choices.items()), type=int, default=None)
+        folders = {
+            idx: folder
+            for idx, folder in enumerate(ray_results.glob("*"))
+            if folder.is_dir()
+            if folder.stem[0].isalpha()
+        }
+        prompt = "\n".join(f"{idx}) {folder.stem}" for idx, folder in folders.items())
+        choice = click.prompt(prompt, type=int, default=None)
         assert choice is not None, choice
-        choice_path = ray_results / choices.get(choice)
-        result_path = next(path for item in os.listdir(choice_path) if (path := choice_path / item).is_dir())
+        result_path = folders.get(choice)
     else:
         result_path = Path(result_path).resolve()
 
     logger.info("Loading %s", result_path)
-    result = Result.from_path(result_path.as_posix())
-    pdb.set_trace()
+    analysis = ExperimentAnalysis(result_path)
+    result_grid = ResultGrid(analysis)
+
+    result = result_grid.get_best_result("loss", "min")
+
+    target = target or os.getenv("TARGET")
+    qdata = load_data(None, env)
+    _, scalers = qdata.process()
+    assert target in scalers, f"[{target}] not in scalers {scalers.keys()}"
+
+    test_result(result, scalers.get(target))
 
 
 lstm_group = click.Group("lstm", help="tools to train and tune lstm models")
