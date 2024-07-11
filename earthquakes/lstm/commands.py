@@ -1,17 +1,17 @@
-import logging, pdb
+import logging
 import os
+import pdb
+from pathlib import Path
+
 import click
 import pandas as pd
 from dotenv import load_dotenv
-
-
-from pathlib import Path
 from ray import tune
-from ray.tune import ResultGrid, ExperimentAnalysis
+from ray.tune import ExperimentAnalysis, ResultGrid
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
-from lstm.trainable import LSTMTrainable, test_result
 from data.data import EarthquakeData
+from lstm.trainable import LSTMTrainable, test_result
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)

@@ -1,17 +1,23 @@
-import logging, pdb
+import logging
 import os
-import pandas as pd
-import numpy as np
-import torch
-from pathlib import Path
 from functools import cached_property
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import torch
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch.nn import MSELoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+sns.set_theme(style="darkgrid")
+
 
 from .dataset import SequencesDataset, create_sequences
 from .model import LSTMModel
@@ -110,12 +116,6 @@ def test_result(result: Result, target_scaler):
 
     print(result.metrics_dataframe)
 
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    import seaborn as sns
-
-    sns.set_theme(style="darkgrid")
 
     # _original = target_scaler.inverse_transform(original)
     # _forecast = target_scaler.inverse_transform(forecast)
