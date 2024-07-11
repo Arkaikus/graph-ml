@@ -71,7 +71,7 @@ class LSTMTrainable(tune.Trainable):
             epoch_loss += loss.item()
 
         mean_loss = epoch_loss / len(self.train_dataloader)
-        return {"loss": epoch_loss, "mean_loss": mean_loss}
+        return {"loss": epoch_loss, "mean_loss": mean_loss, "checkpoint_dir_name": ""}
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
         self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
