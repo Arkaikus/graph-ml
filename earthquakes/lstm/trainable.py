@@ -89,7 +89,7 @@ class LSTMTrainable(tune.Trainable):
             self.optimizer.load_state_dict(optimizer_state)
 
 
-def test_model(result: Result, target_scaler):
+def test_result(result: Result, target_scaler):
     logger.info("Loading testing from config")
     trainable = LSTMTrainable(config=result.config)
     best_checkpoint = result.get_best_checkpoint("loss", "min")
@@ -117,13 +117,16 @@ def test_model(result: Result, target_scaler):
 
     sns.set_theme(style="darkgrid")
 
-    _original = target_scaler.inverse_transform(original)
-    _forecast = target_scaler.inverse_transform(forecast)
-    logger.info("Best trial R2 %s", r2_score(original.squeeze(), forecast.squeeze()))
-    logger.info("Best trial MSE: %s", mean_squared_error(original.squeeze(), forecast.squeeze()))
-    logger.info("Best trial MAE: %s", mean_absolute_error(original.squeeze(), forecast.squeeze()))
+    # _original = target_scaler.inverse_transform(original)
+    # _forecast = target_scaler.inverse_transform(forecast)
+    R2 = r2_score(original.squeeze(), forecast.squeeze())
+    MSE = mean_squared_error(original.squeeze(), forecast.squeeze())
+    MAE = mean_absolute_error(original.squeeze(), forecast.squeeze())
+    logger.info("Best trial R2 %s", R2)
+    logger.info("Best trial MSE: %s", MSE)
+    logger.info("Best trial MAE: %s", MAE)
 
-    hstack = np.hstack((_original, _forecast))
+    hstack = np.hstack((original, forecast))
     logger.info("Hstack %s", hstack.shape)
 
     g = sns.jointplot(
@@ -136,4 +139,15 @@ def test_model(result: Result, target_scaler):
         height=7,
     )
 
-    plt.gcf().savefig(Path(result.path) / "forecast.png")
+    # Add metrics to the plot
+    plt.figtext(
+        0.15,
+        0.70,
+        f"R2: {R2:.2f}\nMSE: {MSE:.2f}\nMAE: {MAE:.2f}",
+        bbox=dict(facecolor="white", alpha=0.5),
+        fontsize=12,
+    )
+
+    save_to = Path(result.path) / "forecast.png"
+    logger.info("Figure saved to %s", save_to)
+    g.figure.savefig(save_to)
