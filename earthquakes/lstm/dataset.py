@@ -24,6 +24,10 @@ class SequencesDataset(Dataset):
         logger.debug("Shape: (batch, seq_length, feature_size)")
         logger.debug("Input shape: %s, target shape: %s", tuple(self.sequences.shape), tuple(self.targets.shape))
 
+    @property
+    def feature_size(self):
+        return self.sequences.shape[2]
+
     def __len__(self):
         return self.sequences.shape[0]
 
@@ -31,9 +35,8 @@ class SequencesDataset(Dataset):
         return self.sequences[idx], self.targets[idx]
 
 
-def create_sequences(qdata: EarthquakeData, size: int, test_size: float, test=False):
-    sequences, targets = qdata.to_sequences(size)
-
+def create_sequences(qdata: EarthquakeData, sequence_size: int, test_size: float, test=False):
+    sequences, targets = qdata.to_sequences(sequence_size)
     (
         train_sequences,
         test_sequences,
