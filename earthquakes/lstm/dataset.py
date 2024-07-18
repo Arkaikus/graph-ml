@@ -5,6 +5,8 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 
+from earthquakes.data.data import EarthquakeData
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,24 +31,8 @@ class SequencesDataset(Dataset):
         return self.sequences[idx], self.targets[idx]
 
 
-def create_sequences(df: pd.DataFrame, target: str, size: int, test_size: float, test=False):
-    """
-    :param df: pd.DataFrame with earthquake data
-
-    Returns ndarrays of shapes ((len(df)//size), size, n) and (len(df)//size,)
-    """
-    inputs, outputs = [], []
-    logger.debug("Dataframe shape %s", df.shape)
-    logger.debug("Sequence length %s", size)
-    logger.debug("Available sequences %s", df.shape[0] // size)
-    assert df.shape[0] - size > 1, "sequence can't be less than available data"
-    for index in range(df.shape[0] - size - 1):
-        sequence = df.iloc[index : index + size].values
-        target_value = df.at[index + size, target]
-        inputs.append(sequence)
-        outputs.append(target_value)
-
-    sequences, targets = np.array(inputs), np.array(outputs).reshape(-1, 1)
+def create_sequences(qdata: EarthquakeData, size: int, test_size: float, test=False):
+    sequences, targets = qdata.to_sequences(size)
 
     (
         train_sequences,
@@ -57,9 +43,9 @@ def create_sequences(df: pd.DataFrame, target: str, size: int, test_size: float,
 
     logger.debug("Train records(%s): %s", 1 - test_size, train_sequences.shape[0])
     logger.debug("Test records(%s): %s", test_size, train_targets.shape[0])
-    logger.debug("Total: %s", df.shape[0])
-    logger.debug("Features: %s", tuple(df.columns))
-    logger.debug("Target: %s", target)
+    logger.debug("Total: %s", sequences.shape[0])
+    logger.debug("Features: %s", tuple(sequences.shape[-1]))
+    logger.debug("Target: %s", qdata.target)
 
     if test:
         return SequencesDataset(test_sequences, test_targets)
