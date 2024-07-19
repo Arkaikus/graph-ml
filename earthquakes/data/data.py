@@ -4,6 +4,7 @@ from functools import cache
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.model_selection import train_test_split
 
 from .grid import Grid
 from .hash import Hashable
@@ -71,6 +72,7 @@ class EarthquakeData(Hashable):
         self.min_latitude = min_latitude
         self.min_longitude = min_longitude
         self.grid = grid
+        self.scalers = {}
         assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
 
     def clean(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -130,7 +132,6 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        scalers = {}
         if self.scaler_class:
             # Insert event with minimum values before index 0
             min_values_row = data.min().to_frame().transpose()
@@ -149,23 +150,11 @@ class EarthquakeData(Hashable):
                 if column in self.numeric_columns:
                     scaler = self.scaler_class()
                     data[column] = scaler.fit_transform(data[[column]])
-                    scalers[column] = scaler
+                    self.scalers[column] = scaler
 
-            return data.drop(0).reset_index(drop=True), scalers
+            return data.drop(0).reset_index(drop=True)
         else:
             logger.warning("No scaler class detected")
-
-        return data, scalers
-
-    def denormalize(self, normal_data: pd.DataFrame, scalers: dict) -> pd.DataFrame:
-        """
-        This method returns the inverse transform for each scaled column
-        """
-        data = normal_data.copy()
-
-        for column in self.numeric_columns:
-            scaler: MinMaxScaler = scalers[column]
-            data[column] = scaler.inverse_transform(data[[column]])
 
         return data
 
@@ -203,3 +192,23 @@ class EarthquakeData(Hashable):
             outputs.append(target_value)
 
         return np.array(inputs), np.array(outputs).reshape(-1, 1)
+
+    def train_test_split(self, sequence_size, test_size: float, test=False):
+        sequences, targets = self.to_sequences(sequence_size)
+        (
+            train_sequences,
+            test_sequences,
+            train_targets,
+            test_targets,
+        ) = train_test_split(sequences, targets, test_size=test_size, shuffle=False)
+
+        logger.debug("Train records(%s): %s", 1 - test_size, train_sequences.shape[0])
+        logger.debug("Test records(%s): %s", test_size, train_targets.shape[0])
+        logger.debug("Total: %s", sequences.shape[0])
+        logger.debug("Features: %s", tuple(sequences.shape[-1]))
+        logger.debug("Target: %s", self.target)
+
+        if test:
+            return test_sequences, test_targets
+        else:
+            return train_sequences, train_targets

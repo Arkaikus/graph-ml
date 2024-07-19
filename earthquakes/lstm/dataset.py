@@ -33,24 +33,3 @@ class SequencesDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.sequences[idx], self.targets[idx]
-
-
-def create_sequences(qdata: EarthquakeData, sequence_size: int, test_size: float, test=False):
-    sequences, targets = qdata.to_sequences(sequence_size)
-    (
-        train_sequences,
-        test_sequences,
-        train_targets,
-        test_targets,
-    ) = train_test_split(sequences, targets, test_size=test_size, shuffle=False)
-
-    logger.debug("Train records(%s): %s", 1 - test_size, train_sequences.shape[0])
-    logger.debug("Test records(%s): %s", test_size, train_targets.shape[0])
-    logger.debug("Total: %s", sequences.shape[0])
-    logger.debug("Features: %s", tuple(sequences.shape[-1]))
-    logger.debug("Target: %s", qdata.target)
-
-    if test:
-        return SequencesDataset(test_sequences, test_targets)
-
-    return SequencesDataset(train_sequences, train_targets)
