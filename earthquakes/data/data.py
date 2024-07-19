@@ -194,6 +194,7 @@ class EarthquakeData(Hashable):
         return np.array(inputs), np.array(outputs).reshape(-1, 1)
 
     def train_test_split(self, sequence_size, test_size: float, test=False):
+        """calculates the sequences and returns a test_train_split, train data if test=False, test data otherwise"""
         sequences, targets = self.to_sequences(sequence_size)
         (
             train_sequences,
