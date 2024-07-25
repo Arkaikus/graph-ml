@@ -75,7 +75,8 @@ class EarthquakeData(Hashable):
         self.scalers = {}
         assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
 
-    def clean(self, data: pd.DataFrame) -> pd.DataFrame:
+    @cache
+    def clean(self) -> pd.DataFrame:
         """
         This method preprocess the data argument
         - Coerce numeric columns with pd.to_numeric
@@ -85,7 +86,7 @@ class EarthquakeData(Hashable):
         - If time_column=True and delta_time=True calculates the time difference between events in days by default
 
         """
-        processed_data = data.copy()
+        processed_data = self.raw_data.copy()
         for column in self.numeric_columns:
             assert column in processed_data.columns, f"[{column}] is not in the dataframe"
 
@@ -165,7 +166,9 @@ class EarthquakeData(Hashable):
         :param grid: (Grid) instance of grid object to handle node tagging
         :param notmalize: to run
         """
-        data = self.clean(self.raw_data)
+
+        data = self.clean()
+        assert self.target in data
 
         if self.grid:
             data["node"] = self.grid.apply_node(data)
@@ -193,23 +196,7 @@ class EarthquakeData(Hashable):
 
         return np.array(inputs), np.array(outputs).reshape(-1, 1)
 
-    def train_test_split(self, sequence_size, test_size: float, test=False):
+    def train_test_split(self, sequence_size, test_size: float):
         """calculates the sequences and returns a test_train_split, train data if test=False, test data otherwise"""
         sequences, targets = self.to_sequences(sequence_size)
-        (
-            train_sequences,
-            test_sequences,
-            train_targets,
-            test_targets,
-        ) = train_test_split(sequences, targets, test_size=test_size, shuffle=False)
-
-        logger.debug("Train records(%s): %s", 1 - test_size, train_sequences.shape[0])
-        logger.debug("Test records(%s): %s", test_size, train_targets.shape[0])
-        logger.debug("Total: %s", sequences.shape[0])
-        logger.debug("Features: %s", tuple(sequences.shape[-1]))
-        logger.debug("Target: %s", self.target)
-
-        if test:
-            return test_sequences, test_targets
-        else:
-            return train_sequences, train_targets
+        return train_test_split(sequences, targets, test_size=test_size, shuffle=False)
