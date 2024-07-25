@@ -13,12 +13,12 @@ from ray.train import Checkpoint
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch.nn import MSELoss
 from torch.optim import Adam
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 sns.set_theme(style="darkgrid")
 
 
-from .dataset import create_sequences
+from data.data import EarthquakeData
 from .model import LSTMModel
 
 logger = logging.getLogger(__name__)
@@ -26,26 +26,33 @@ logger = logging.getLogger(__name__)
 
 class LSTMTrainable(tune.Trainable):
     @classmethod
-    def with_parameters(cls, config, data, target) -> "LSTMTrainable":
-        return tune.with_parameters(cls, data=data, target=target)(config=config)
+    def with_parameters(cls, config, qdata: EarthquakeData) -> "LSTMTrainable":
+        return tune.with_parameters(cls, qdata=qdata)(config=config)
 
-    def setup(self, config: dict, data: pd.DataFrame, target: str):
+    def setup(self, config: dict, qdata: EarthquakeData):
         logging.basicConfig(level=logging.INFO)
-        self.config = config
         self.logger = logging.getLogger(self.trial_id)
         """takes hyperparameter values in the config argument"""
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        batch_size = config["batch_size"]
         sequence_size = config.get("sequence_size")
         test_size = config.get("test_size")
+        self.epoch = 0
 
-        assert target, "[target] cannot be None"
         assert sequence_size, "[sequence_size] cannot be None"
 
         # prepare train test split of data
-        self.train_dataset, self.test_dataset = create_sequences(data, target, sequence_size, test_size)
-        self.train_dataloader = DataLoader(self.train_dataset, batch_size=self.config["batch_size"], shuffle=False)
-        self.test_dataloader = DataLoader(self.test_dataset, batch_size=self.config["batch_size"], shuffle=False)
-        feature_size = data.shape[1]  # 0:seq 1:features
+        x_train, x_test, y_train, y_test = EarthquakeData.train_test_split(qdata, sequence_size, test_size)
+        self.x_train = torch.Tensor(x_train).to(torch.float32)
+        self.x_test = torch.Tensor(x_test).to(torch.float32)
+        self.y_train = torch.Tensor(y_train).to(torch.float32)
+        self.y_test = torch.Tensor(y_test).to(torch.float32)
+        train_dataset = TensorDataset(self.x_train, self.y_train)
+        test_dataset = TensorDataset(self.x_test, self.y_test)
+        self.train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+        self.test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+        feature_size = x_train.shape[2]  # 0:batch, 1:seq 2:features
         hidden_size = config.get("hidden_size", 1)
         lstm_layers = config.get("layers", 1)
 
@@ -55,6 +62,7 @@ class LSTMTrainable(tune.Trainable):
 
     def step(self):
         epoch_loss = 0
+        self.model.train()
         for inputs, outputs in self.train_dataloader:
             forecast = self.model(inputs.to(torch.float32).to(self.device))
             loss = self.loss(forecast, outputs.to(torch.float32).to(self.device))
@@ -64,7 +72,9 @@ class LSTMTrainable(tune.Trainable):
             epoch_loss += loss.item()
 
         mean_loss = epoch_loss / len(self.train_dataloader)
-        return {"loss": epoch_loss, "mean_loss": mean_loss, "checkpoint_dir_name": ""}
+        _, _, metrics = self.forecast()
+        self.epoch += 1
+        return {"epoch": self.epoch, "loss": epoch_loss, "mean_loss": mean_loss, "checkpoint_dir_name": "", **metrics}
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
         self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
@@ -84,39 +94,52 @@ class LSTMTrainable(tune.Trainable):
     def forecast(self):
         original = []
         forecast = []
-
-        logger.info("Loaded model %s", self.model)
-
+        self.model.eval()
         with torch.no_grad():
-            for data in self.test_dataloader:
-                inputs, outputs = data
-                original.append(outputs)
+            for inputs, outputs in self.test_dataloader:
+                original.append(outputs.numpy())
                 model_output = self.model(inputs.to(torch.float32).to(self.device))
-                forecast.append(model_output.cpu())
+                forecast.append(model_output.detach().cpu().numpy())
 
-        return np.vstack(original), np.vstack(forecast)
+        original, forecast = np.vstack(original), np.vstack(forecast)
+        test_loss = mean_squared_error(original, forecast)
+        test_mae = mean_absolute_error(original, forecast)
+        test_rmse = np.sqrt(test_loss)
+        _original, _forecast = original.squeeze(), forecast.squeeze()
+        test_r2 = r2_score(_original, _forecast)
+        metrics = {
+            "test_loss": test_loss,
+            "test_rmse": test_rmse,
+            "test_r2": test_r2,
+            "test_mae": test_mae,
+        }
+        logger.info("Test metrics %s", metrics)
+        return (original, forecast, metrics)
 
 
-def test_result(result: Result, data: pd.DataFrame, scalers: dict, target: str):
+def test_result(result: Result, qdata: EarthquakeData):
     logger.info("Loading testing from config")
-    trainable = LSTMTrainable.with_parameters(result.config, data, target)
+    trainable = LSTMTrainable.with_parameters(result.config, qdata)
     best_checkpoint = result.get_best_checkpoint("loss", "min")
     trainable.load_checkpoint(best_checkpoint)
 
     print(result.metrics_dataframe)
 
-    original, forecast = trainable.forecast()
+    original, forecast, metrics = trainable.forecast()
     # target_scaler = scalers.get(target)
     # if target_scaler:
     #     original = target_scaler.inverse_transform(original)
     #     forecast = target_scaler.inverse_transform(forecast)
 
-    R2 = r2_score(original.squeeze(), forecast.squeeze())
-    MSE = mean_squared_error(original.squeeze(), forecast.squeeze())
-    MAE = mean_absolute_error(original.squeeze(), forecast.squeeze())
-    logger.info("Best trial R2 %s", R2)
-    logger.info("Best trial MSE: %s", MSE)
-    logger.info("Best trial MAE: %s", MAE)
+    R2 = metrics["test_r2"]
+    MSE = metrics["test_loss"]
+    RMSE = metrics["test_rmse"]
+    MAE = metrics["test_mae"]
+
+    logger.info("Best trial R2 %s", metrics["test_r2"])
+    logger.info("Best trial MSE: %s", metrics["test_loss"])
+    logger.info("Best trial RMSE: %s", metrics["test_rmse"])
+    logger.info("Best trial MAE: %s", metrics["test_mae"])
 
     hstack = np.hstack((original, forecast))
     logger.info("Hstack %s", hstack.shape)
@@ -135,7 +158,7 @@ def test_result(result: Result, data: pd.DataFrame, scalers: dict, target: str):
     plt.figtext(
         0.15,
         0.70,
-        f"R2: {R2:.2f}\nMSE: {MSE:.2f}\nMAE: {MAE:.2f}",
+        f"R2: {R2:.2f}\nRMSE: {RMSE:.2f}\nMAE: {MAE:.2f}",
         bbox=dict(facecolor="white", alpha=0.5),
         fontsize=12,
     )

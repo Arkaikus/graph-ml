@@ -15,14 +15,19 @@ class LSTMModel(nn.Module):
         for batch processing batch_first is enabled so we would process (batch, seq_size, feature_size)
         """
         super().__init__()
-        self.relu = nn.ReLU()
         self.lstm = nn.LSTM(feature_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
-        self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc2 = nn.Linear(hidden_size // 2, 1)
+        self.linear = nn.Linear(hidden_size, 1)
 
     def forward(self, batch):
         out, _ = self.lstm(batch)
         out = out[:, -1, :]  # Use the last output of the LSTM
-        out = self.relu(self.fc1(out))
-        out = self.relu(self.fc2(out))
-        return out
+        return self.linear(out)
+
+    @classmethod
+    def from_config(cls, config: dict):
+        return cls(
+            config["feature_size"],
+            config["hidden_size"],
+            config["num_layers"],
+            config["dropout"],
+        )

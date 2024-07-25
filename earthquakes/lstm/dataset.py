@@ -3,8 +3,6 @@ import logging
 import numpy as np
 from torch.utils.data import Dataset
 
-from earthquakes.data.data import EarthquakeData
-
 
 logger = logging.getLogger(__name__)
 
