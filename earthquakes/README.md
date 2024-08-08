@@ -15,3 +15,10 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 
 ```
+
+if nvidia cuda is failing try
+
+```bash
+sudo modprobe --remove nvidia_uvm
+sudo modprobe nvidia_uvm
+```
