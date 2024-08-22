@@ -4,61 +4,64 @@ import pandas as pd
 import numpy as np
 import torch
 from pathlib import Path
-from functools import cached_property
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from torch.nn import MSELoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-from .dataset import SequencesDataset, create_sequences
+from torch.utils.data import DataLoader, TensorDataset
+
+from data.data import EarthquakeData
 from .model import LSTMModel
 
 logger = logging.getLogger(__name__)
 
 
 class LSTMTrainable(tune.Trainable):
-    def setup(self, config: dict):
-        logging.basicConfig(level=logging.INFO)
-        self.config = config
-        self.logger = logging.getLogger(self.trial_id)
+    @classmethod
+    def with_parameters(cls, config, qdata: EarthquakeData) -> "LSTMTrainable":
+        return tune.with_parameters(cls, qdata=qdata)(config=config)
+
+    def setup(self, config: dict, qdata: EarthquakeData):
         """takes hyperparameter values in the config argument"""
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(self.trial_id)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        data: pd.DataFrame = config.get("data")  # Load your data here
-        target: str = config.get("target")  # Set your target column name
+
+        batch_size = config["batch_size"]
         sequence_size = config.get("sequence_size")
         test_size = config.get("test_size")
+        self.max_epochs = config.get("max_epochs", 100)
+        self.epoch = 0
 
-        assert target, "[target] cannot be None"
         assert sequence_size, "[sequence_size] cannot be None"
 
         # prepare train test split of data
         (
-            self.train_sequences,
-            self.test_sequences,
-            self.train_targets,
-            self.test_targets,
-        ) = create_sequences(data, target, sequence_size, test_size)
+            (self.x_train, self.y_train),
+            (self.x_val, self.y_val),
+            (self.x_test, self.y_test),
+        ) = qdata.train_test_split(sequence_size, test_size)
 
-        feature_size = data.shape[1]  # 0:seq 1:features
+        train_dataset = TensorDataset(self.x_train, self.y_train)
+        val_dataset = TensorDataset(self.x_val, self.y_val)
+        test_dataset = TensorDataset(self.x_test, self.y_test)
+        self.train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
+        self.val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        self.test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+        feature_size = self.x_train.shape[2]  # 0:batch, 1:lookback 2:features
         hidden_size = config.get("hidden_size", 1)
-        num_layers = config.get("num_layers", 1)
+        lstm_layers = config.get("num_layers", 1)
 
-        self.model = LSTMModel(feature_size, hidden_size, num_layers, 1).to(self.device)
+        self.model = LSTMModel(feature_size, hidden_size, lstm_layers, 1).to(self.device)
         self.loss = MSELoss()
         self.optimizer = Adam(self.model.parameters(), lr=config["lr"])
-
-    @cached_property
-    def train_dataloader(self):
-        self.train_dataset = SequencesDataset(self.train_sequences, self.train_targets)
-        return DataLoader(self.train_dataset, batch_size=self.config["batch_size"], shuffle=False)
-
-    @cached_property
-    def test_dataloader(self):
-        self.test_dataset = SequencesDataset(self.test_sequences, self.test_targets)
-        return DataLoader(self.test_dataset, batch_size=self.config["batch_size"], shuffle=False)
 
     def step(self):
         epoch_loss = 0
@@ -89,41 +92,22 @@ class LSTMTrainable(tune.Trainable):
             self.optimizer.load_state_dict(optimizer_state)
 
 
-def test_model(result: Result, target_scaler):
-    logger.info("Loading testing from config")
-    trainable = LSTMTrainable(config=result.config)
-    best_checkpoint = result.get_best_checkpoint("loss", "min")
-    trainable.load_checkpoint(best_checkpoint)
+def plot_scatter(original, forecast, file_path, name="scatter"):
+    """
+    Plots a scatter plot of the forecast against the original data with metrics
+    this is useful for visualizing the performance of the model
+    it uses seaborn to plot the scatter plot with a regression line
+    """
+    MSE = mean_squared_error(original, forecast)
+    MAE = mean_absolute_error(original, forecast)
+    R2 = r2_score(original, forecast)
+    RMSE = np.sqrt(MSE)
+    logger.info("Best trial R2 %s", R2)
+    logger.info("Best trial MSE: %s", MSE)
+    logger.info("Best trial RMSE: %s", RMSE)
+    logger.info("Best trial MAE: %s", MAE)
 
-    original = []
-    forecast = []
-
-    with torch.no_grad():
-        for data in trainable.test_dataloader:
-            inputs, outputs = data
-            original.append(outputs)
-            model_output = trainable.model(inputs.to(torch.float32).to(trainable.device))
-            forecast.append(model_output.cpu())
-
-    original = np.vstack(original)
-    forecast = np.vstack(forecast)
-
-    print(result.metrics_dataframe)
-
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    import seaborn as sns
-
-    sns.set_theme(style="darkgrid")
-
-    _original = target_scaler.inverse_transform(original)
-    _forecast = target_scaler.inverse_transform(forecast)
-    logger.info("Best trial R2 %s", r2_score(original.squeeze(), forecast.squeeze()))
-    logger.info("Best trial MSE: %s", mean_squared_error(original.squeeze(), forecast.squeeze()))
-    logger.info("Best trial MAE: %s", mean_absolute_error(original.squeeze(), forecast.squeeze()))
-
-    hstack = np.hstack((_original, _forecast))
+    hstack = np.hstack((original, forecast))
     logger.info("Hstack %s", hstack.shape)
 
     g = sns.jointplot(
@@ -136,4 +120,53 @@ def test_model(result: Result, target_scaler):
         height=7,
     )
 
-    plt.gcf().savefig(Path(result.path) / "forecast.png")
+    # Add metrics to the plot
+    plt.figtext(
+        0.15,
+        0.70,
+        f"R2: {R2:.2f}\nMSE: {MSE:.2f}\nMAE: {MAE:.2f}",
+        bbox=dict(facecolor="white", alpha=0.5),
+        fontsize=12,
+    )
+
+    save_to = Path(file_path) / f"{name}.png"
+    logger.info("Figure saved to %s", save_to)
+    g.figure.savefig(save_to)
+    plt.close(g.figure)
+
+
+def test_result(result: Result, qdata: EarthquakeData):
+    logger.info("Loading testing from config")
+    trainable = LSTMTrainable.with_parameters(result.config, qdata)
+    best_checkpoint = result.get_best_checkpoint("loss", "min")
+    trainable.load_checkpoint(best_checkpoint)
+
+    print(result.metrics_dataframe)
+
+    original = []
+    forecast = []
+
+    with torch.no_grad():
+        for data in trainable.test_dataloader:
+            inputs, outputs = data
+            original.append(outputs)
+            model_output = trainable.model(inputs.to(trainable.device))
+            forecast.append(model_output.cpu())
+
+    original = np.vstack(original)
+    forecast = np.vstack(forecast)
+
+    plot_scatter(original, forecast, result.path, name="scatter")
+
+    # create a
+    fig, ax = plt.subplots(figsize=(30, 5))
+    ax.plot(original, label="Real")
+    ax.plot(forecast, label="Forecast")
+    ax.legend()
+    plt.title("Test Data Real vs Forecast")
+    plt.xlabel("Time")
+    plt.ylabel("Magnitude")
+    save_to = Path(result.path) / "forecast.png"
+    logger.info("Figure saved to %s", save_to)
+    fig.savefig(save_to)
+    plt.close(fig)

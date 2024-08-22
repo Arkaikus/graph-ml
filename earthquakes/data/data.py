@@ -1,7 +1,11 @@
 import logging
+from functools import cache
 
 import pandas as pd
+import numpy as np
+import torch
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.model_selection import train_test_split
 
 from .grid import Grid
 from .hash import Hashable
@@ -14,10 +18,16 @@ class EarthquakeData(Hashable):
     Wrapper class to clean and normalize the csv catalog
     """
 
+    modes = {
+        "standard": StandardScaler,
+        "minmax": MinMaxScaler,
+    }
+
     def __init__(
         self,
         raw_data: pd.DataFrame,
         numeric_columns: list,
+        target: str,
         time_column: bool = False,
         drop_time_column: bool = False,
         delta_time: bool = False,
@@ -28,6 +38,7 @@ class EarthquakeData(Hashable):
         scaler_mode="standard",
         min_latitude=None,
         min_longitude=None,
+        grid: Grid = None,
     ):
         """
         Parameters
@@ -49,6 +60,7 @@ class EarthquakeData(Hashable):
         """
         self.raw_data = raw_data
         self.numeric_columns = numeric_columns
+        self.target = target
         self.time_column = time_column
         self.drop_time_column = drop_time_column
         self.delta_time = delta_time
@@ -57,16 +69,22 @@ class EarthquakeData(Hashable):
         self.min_magnitude = min_magnitude
         self.zero_columns = zero_columns
 
-        modes = {
-            "standard": StandardScaler,
-            "minmax": MinMaxScaler,
-        }
         self.scaler_mode = scaler_mode
-        self.scaler_class = modes.get(scaler_mode)
+        self.scaler_class = self.modes.get(scaler_mode)
         self.min_latitude = min_latitude
         self.min_longitude = min_longitude
+        self.grid = grid
+        self.scalers = {}
+        assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
 
-    def clean(self, data: pd.DataFrame) -> pd.DataFrame:
+    @property
+    def processed_data(self):
+        if not hasattr(self, "_processed_data"):
+            self._processed_data = self.__process()
+
+        return self._processed_data
+
+    def clean(self) -> pd.DataFrame:
         """
         This method preprocess the data argument
         - Coerce numeric columns with pd.to_numeric
@@ -76,7 +94,7 @@ class EarthquakeData(Hashable):
         - If time_column=True and delta_time=True calculates the time difference between events in days by default
 
         """
-        processed_data = data.copy()
+        processed_data = self.raw_data.copy()
         for column in self.numeric_columns:
             assert column in processed_data.columns, f"[{column}] is not in the dataframe"
 
@@ -123,56 +141,79 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        scalers = {}
         if self.scaler_class:
+            # Insert event with minimum values before index 0
+            min_values_row = data.min().to_frame().transpose()
+            min_values_row["latitude"] = float(self.min_latitude)
+            min_values_row["longitude"] = float(self.min_longitude)
+
+            for column in self.zero_columns:
+                # columns that actually real minimum value is 0
+                # this helps offseting the minmax scaler
+                # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
+                # thus minmaxscaler cannot treat 4.0 as 0.0
+                min_values_row[column] = 0
+
+            data = pd.concat([min_values_row, data], ignore_index=True)
             for column in data.columns:
                 if column in self.numeric_columns:
                     scaler = self.scaler_class()
                     data[column] = scaler.fit_transform(data[[column]])
-                    scalers[column] = scaler
+                    self.scalers[column] = scaler
+
+            return data.drop(0).reset_index(drop=True)
         else:
             logger.warning("No scaler class detected")
 
-        return data, scalers
-
-    def denormalize(self, normal_data: pd.DataFrame, scalers: dict) -> pd.DataFrame:
-        """
-        This method returns the inverse transform for each scaled column
-        """
-        data = normal_data.copy()
-
-        for column in self.numeric_columns:
-            scaler: MinMaxScaler = scalers[column]
-            data[column] = scaler.inverse_transform(data[[column]])
-
         return data
 
-    def process(self, grid: Grid = None):
+    def __process(self):
         """
         Runs the cleaning and normalizaiton, against the wrapped data
         :param grid: (Grid) instance of grid object to handle node tagging
         :param notmalize: to run
         """
-        data = self.clean(self.raw_data)
 
-        if grid:
-            data["node"] = grid.apply_node(data)
+        data = self.clean()
+        assert self.target in data
+
+        if self.grid:
+            data["node"] = self.grid.apply_node(data)
             data = data.astype(dict(node=int))
 
-        # Insert event with minimum values before index 0
-        min_values_row = data.min().to_frame().transpose()
-        min_latitude = grid.min_latitude if grid else self.min_latitude
-        min_longitude = grid.min_longitude if grid else self.min_longitude
-        assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
-        min_values_row["latitude"] = float(min_latitude)
-        min_values_row["longitude"] = float(min_longitude)
+        return self.normalize(data)
 
-        for column in self.zero_columns:
-            # columns that actually real minimum value is 0
-            # this helps offseting the minmax scaler
-            # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
-            # thus minmaxscaler cannot treat 4.0 as 0.0
-            min_values_row[column] = 0
-        data = pd.concat([min_values_row, data], ignore_index=True)
-        data, scalers = self.normalize(data)
-        return data.drop(0).reset_index(drop=True), scalers
+    @cache
+    def to_sequences(self, lookback):
+        """
+        Processes the raw data and returns a two numpy arrays,
+        one with sequences of shape (n-1, seq_size, feature_size)
+        and target of shape (n-1,)
+        """
+        data = self.processed_data
+        inputs, outputs = [], []
+        logger.debug("Dataframe shape %s", data.shape)
+        logger.debug("Sequence length %s", lookback)
+        logger.debug("Available sequences %s", data.shape[0] // lookback)
+        assert data.shape[0] - lookback > 1, "sequence can't be less than available data"
+        inputs, outputs = [], []
+        for i in range(len(data) - lookback):
+            feature = data[i : i + lookback]
+            target = data.at[i + lookback, self.target]
+            inputs.append(feature)
+            outputs.append([target])
+
+        return np.array(inputs), np.array(outputs)
+
+    @cache
+    def train_test_split(self, sequence_size, test_size: float):
+        """calculates the sequences and returns a test_train_split, train data if test=False, test data otherwise"""
+        # this achieves a 80/20 split ratio, e.g. 0.2 test_size implies 0.6 train_size, 0.2 validation_size
+        train_size = 1 - (test_size * 2)
+
+        sequences, targets = self.to_sequences(sequence_size)
+        sequences = torch.Tensor(sequences).to(torch.float32)
+        targets = torch.Tensor(targets).to(torch.float32)
+        X_train, X_test, y_train, y_test = train_test_split(sequences, targets, train_size=train_size, shuffle=False)
+        X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.5, shuffle=False)
+        return (X_train, y_train), (X_val, y_val), (X_test, y_test)
