@@ -18,6 +18,11 @@ class EarthquakeData(Hashable):
     Wrapper class to clean and normalize the csv catalog
     """
 
+    modes = {
+        "standard": StandardScaler,
+        "minmax": MinMaxScaler,
+    }
+
     def __init__(
         self,
         raw_data: pd.DataFrame,
@@ -64,12 +69,8 @@ class EarthquakeData(Hashable):
         self.min_magnitude = min_magnitude
         self.zero_columns = zero_columns
 
-        modes = {
-            "standard": StandardScaler,
-            "minmax": MinMaxScaler,
-        }
         self.scaler_mode = scaler_mode
-        self.scaler_class = modes.get(scaler_mode)
+        self.scaler_class = self.modes.get(scaler_mode)
         self.min_latitude = min_latitude
         self.min_longitude = min_longitude
         self.grid = grid
@@ -79,7 +80,7 @@ class EarthquakeData(Hashable):
     @property
     def processed_data(self):
         if not hasattr(self, "_processed_data"):
-            self._processed_data = self.process()
+            self._processed_data = self.__process()
 
         return self._processed_data
 
@@ -166,7 +167,7 @@ class EarthquakeData(Hashable):
 
         return data
 
-    def process(self):
+    def __process(self):
         """
         Runs the cleaning and normalizaiton, against the wrapped data
         :param grid: (Grid) instance of grid object to handle node tagging
