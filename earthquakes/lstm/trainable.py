@@ -64,17 +64,40 @@ class LSTMTrainable(tune.Trainable):
         self.optimizer = Adam(self.model.parameters(), lr=config["lr"])
 
     def step(self):
+        if self.epoch >= self.max_epochs:
+            return {"done": True}
+
         epoch_loss = 0
         for inputs, outputs in self.train_dataloader:
-            forecast = self.model(inputs.to(torch.float32).to(self.device))
-            loss = self.loss(forecast, outputs.to(torch.float32).to(self.device))
+            forecast = self.model(inputs.to(self.device))
+            loss = self.loss(forecast, outputs.to(self.device))
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             epoch_loss += loss.item()
 
+        with torch.no_grad():
+            self.model.eval()
+            val_loss = 0
+            val_pred = []
+            for val_input, val_output in self.val_dataloader:
+                y_pred = self.model(val_input.to(self.device))
+                val_loss += self.loss(y_pred, val_output.to(self.device)).item()
+                val_pred.append(y_pred.detach().cpu())
+
+            val_pred = torch.cat(val_pred, dim=0)
+            val_r2 = r2_score(self.y_val.numpy(), val_pred.numpy())
+            val_loss = val_loss / len(self.val_dataloader)
+
+        self.model.train()
         mean_loss = epoch_loss / len(self.train_dataloader)
-        return {"loss": epoch_loss, "mean_loss": mean_loss, "checkpoint_dir_name": ""}
+        return {
+            "loss": epoch_loss,
+            "mean_loss": mean_loss,
+            "val_loss": val_loss,
+            "val_r2": val_r2,
+            "checkpoint_dir_name": "",
+        }
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
         self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
@@ -135,6 +158,20 @@ def plot_scatter(original, forecast, file_path, name="scatter"):
     plt.close(g.figure)
 
 
+def forecast_loader(model, device, dataloader):
+    original = []
+    forecast = []
+    with torch.no_grad():
+        model.eval()
+        for inputs, outputs in dataloader:
+            y_pred = model(inputs.to(device))
+            original.append(outputs)
+            forecast.append(y_pred)
+    original = torch.cat(original, dim=0).cpu().numpy()
+    forecast = torch.cat(forecast, dim=0).cpu().numpy()
+    return original, forecast
+
+
 def test_result(result: Result, qdata: EarthquakeData):
     logger.info("Loading testing from config")
     trainable = LSTMTrainable.with_parameters(result.config, qdata)
@@ -143,20 +180,14 @@ def test_result(result: Result, qdata: EarthquakeData):
 
     print(result.metrics_dataframe)
 
-    original = []
-    forecast = []
+    original, forecast = forecast_loader(trainable.model, trainable.device, trainable.train_dataloader)
+    plot_scatter(original, forecast, result.path, name="train_scatter")
 
-    with torch.no_grad():
-        for data in trainable.test_dataloader:
-            inputs, outputs = data
-            original.append(outputs)
-            model_output = trainable.model(inputs.to(trainable.device))
-            forecast.append(model_output.cpu())
+    original, forecast = forecast_loader(trainable.model, trainable.device, trainable.val_dataloader)
+    plot_scatter(original, forecast, result.path, name="val_scatter")
 
-    original = np.vstack(original)
-    forecast = np.vstack(forecast)
-
-    plot_scatter(original, forecast, result.path, name="scatter")
+    original, forecast = forecast_loader(trainable.model, trainable.device, trainable.test_dataloader)
+    plot_scatter(original, forecast, result.path, name="test_scatter")
 
     # create a
     fig, ax = plt.subplots(figsize=(30, 5))

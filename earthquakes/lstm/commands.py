@@ -4,6 +4,7 @@ import click
 import pandas as pd
 from dotenv import load_dotenv
 from pathlib import Path
+import ray
 from ray import tune
 from ray.tune import ExperimentAnalysis, ResultGrid
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
@@ -56,23 +57,28 @@ def load_data(file: str, env: str) -> EarthquakeData:
 @click.command(name="tune")
 @click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
 @click.option("-e", "--env", type=str, help="env")
-def tune_command(file, env):
+@click.option("-s", "--samples", type=int, help="samples", default=200)
+def tune_command(file, env, samples):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
     qdata = load_data(file, env)
     logger.info("Processing data...")
-    scheduler = ASHAScheduler(metric="loss", mode="min", grace_period=1, reduction_factor=2)
+    scheduler = ASHAScheduler(metric="val_r2", mode="max", grace_period=1, reduction_factor=2)
     trainable = tune.with_parameters(LSTMTrainable, qdata=qdata)
+    ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
     tuner = tune.Tuner(
-        tune.with_resources(trainable, resources={"cpu": 2, "gpu": 1}),  # TRAINABLE
-        tune_config=tune.TuneConfig(scheduler=scheduler, num_samples=10),
+        tune.with_resources(trainable, resources={"cpu": 8, "gpu": 1}),  # TRAINABLE
+        tune_config=tune.TuneConfig(scheduler=scheduler, num_samples=samples),
         param_space={
-            "test_size": tune.choice([0.3, 0.2, 0.1]),
-            "sequence_size": tune.choice([50, 100, 150]),
+            "test_size": tune.uniform(0.1, 0.3),
+            "sequence_size": tune.randint(10, 150),
             "hidden_size": tune.choice([32, 64, 128]),
             "num_layers": tune.choice([1, 2, 3]),
-            "lr": tune.choice([1e-3, 1e-4]),
-            "batch_size": tune.choice([2, 5, 10]),
-            "max_epochs": tune.choice([25, 50, 100]),
+            "lr": tune.loguniform(1e-4, 1e-2),
+            "batch_size": tune.randint(2, 10),
+            "max_epochs": tune.randint(25, 100),
+            # "lr": tune.choice([1e-3, 1e-4]),
+            # "batch_size": tune.choice([2, 5, 10]),
+            # "max_epochs": tune.choice([25, 50, 100]),
         },
     )
     results = tuner.fit()
