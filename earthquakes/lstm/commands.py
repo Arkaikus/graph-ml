@@ -12,7 +12,6 @@ from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
 from data.data import EarthquakeData
 
-# from lstm.trainable_fn import train_fn, test_result
 from lstm.trainable import LSTMTrainable as train_fn, test_result
 from settings import read_coordinates
 
@@ -48,21 +47,19 @@ def load_data(file: str, env: str) -> EarthquakeData:
     numeric_columns = split_n_parse(os.getenv("NUMERIC_COLUMNS", ""), str)
     zero_columns = split_n_parse(os.getenv("ZERO_COLUMNS", ""), str)
     target = os.getenv("TARGET")
-    scaler_mode = os.getenv("SCALER_MODE")
-    time_column = os.getenv("TIME_COLUMN", "true").lower() == "true"
-    delta_time = os.getenv("DELTA_TIME", "true").lower() == "true"
-    drop_time = os.getenv("DROP_TIME", "true").lower() == "true"
+    scaler_mode = os.getenv("SCALER_MODE", "standard")
 
     return EarthquakeData(
         raw_data,
         numeric_columns=numeric_columns,
-        target=target,
         zero_columns=zero_columns,  # can be zero when scaling
-        time_column=time_column,
-        delta_time=delta_time,
-        drop_time_column=drop_time,
+        target=target,
+        time_column=True,
+        delta_time=True,
+        drop_time_column=True,
         min_latitude=min(latitude),
         min_longitude=min(longitude),
+        min_magnitude=4,
         scaler_mode=scaler_mode,
     )
 
@@ -72,11 +69,10 @@ def load_parameters(env):
     test_size = os.getenv("TEST_SIZE")
     sequence_size = os.getenv("SEQUENCE_SIZE")
     hidden_size = os.getenv("HIDDEN_SIZE")
-    dropout = os.getenv("DROPOUT")
     num_layers = os.getenv("NUM_LAYERS")
     lr = os.getenv("LR")
     batch_size = os.getenv("BATCH_SIZE")
-    epochs = os.getenv("EPOCHS")
+    max_epochs = os.getenv("MAX_EPOCHS")
 
     return {
         "test_size": tune.choice(split_n_parse(test_size, float)),
@@ -85,31 +81,24 @@ def load_parameters(env):
         "num_layers": tune.choice(split_n_parse(num_layers, int)),
         "lr": tune.choice(split_n_parse(lr, float)),
         "batch_size": tune.choice(split_n_parse(batch_size, int)),
-        "epochs": tune.choice(split_n_parse(epochs, int)),
-        "dropout": tune.choice(split_n_parse(dropout, float)),
+        "max_epochs": tune.choice(split_n_parse(max_epochs, int)),
     }
 
 
 @click.command(name="tune")
 @click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
 @click.option("-e", "--env", type=str, help="path to .env file with variables to be loaded")
-@click.option("-r", "--resume", type=bool, help="whether to continue training on an existing experiment", default=False)
-@click.option("-s", "--samples", type=int, help="number of parameter space samples to take", default=10)
-def tune_command(file, env, resume, samples):
+@click.option("-s", "--samples", type=int, help="number of parameter space samples to take", default=100)
+def tune_command(file, env, samples):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
     logger.info("Processing data...")
     qdata = load_data(file, env)
     param_space = load_parameters(env)
     trainable = tune.with_parameters(train_fn, qdata=qdata)
     trainable = tune.with_resources(trainable, resources={"cpu": 8, "gpu": 1})
-    scheduler = ASHAScheduler(metric="loss", mode="min", max_t=30, grace_period=1, reduction_factor=2)
-    tune_config = tune.TuneConfig(scheduler=scheduler, num_samples=samples)
-    kwargs = {}
-    if resume:
-        kwargs["run_config"] = train.RunConfig(storage_path=prompt_experiment())
-
-    # instance tuner
-    tuner = tune.Tuner(trainable, tune_config=tune_config, param_space=param_space, **kwargs)
+    scheduler = ASHAScheduler()
+    tune_config = tune.TuneConfig(mode="min", metric="loss", scheduler=scheduler, num_samples=samples)
+    tuner = tune.Tuner(trainable, tune_config=tune_config, param_space=param_space)
     results = tuner.fit()
 
     logger.info("Results path at %s", results.experiment_path)
@@ -120,7 +109,7 @@ def tune_command(file, env, resume, samples):
 @click.command(name="test")
 @click.option("-ex", "--experiment-path", type=str, help="experiment path", default=None)
 @click.option("-e", "--env", type=str, help="env path", default=None)
-def test_command(experiment_path, target, env):
+def test_command(experiment_path, env):
     result_path = Path(experiment_path).resolve() if experiment_path else prompt_experiment()
     logger.info("Loading %s", result_path)
     analysis = ExperimentAnalysis(result_path)
