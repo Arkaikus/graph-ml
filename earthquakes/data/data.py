@@ -3,6 +3,7 @@ from functools import cache
 
 import pandas as pd
 import numpy as np
+import torch
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
 
@@ -75,7 +76,13 @@ class EarthquakeData(Hashable):
         self.scalers = {}
         assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
 
-    @cache
+    @property
+    def processed_data(self):
+        if not hasattr(self, "_processed_data"):
+            self._processed_data = self.process()
+
+        return self._processed_data
+
     def clean(self) -> pd.DataFrame:
         """
         This method preprocess the data argument
@@ -159,7 +166,6 @@ class EarthquakeData(Hashable):
 
         return data
 
-    @cache
     def process(self):
         """
         Runs the cleaning and normalizaiton, against the wrapped data
@@ -176,27 +182,37 @@ class EarthquakeData(Hashable):
 
         return self.normalize(data)
 
-    def to_sequences(self, sequence_size):
+    @cache
+    def to_sequences(self, lookback):
         """
         Processes the raw data and returns a two numpy arrays,
         one with sequences of shape (n-1, seq_size, feature_size)
         and target of shape (n-1,)
         """
-        data = self.process()
+        data = self.processed_data
         inputs, outputs = [], []
         logger.debug("Dataframe shape %s", data.shape)
-        logger.debug("Sequence length %s", sequence_size)
-        logger.debug("Available sequences %s", data.shape[0] // sequence_size)
-        assert data.shape[0] - sequence_size > 1, "sequence can't be less than available data"
-        for index in range(data.shape[0] - sequence_size - 1):
-            sequence = data.iloc[index : index + sequence_size].values
-            target_value = data.at[index + sequence_size, self.target]
-            inputs.append(sequence)
-            outputs.append(target_value)
+        logger.debug("Sequence length %s", lookback)
+        logger.debug("Available sequences %s", data.shape[0] // lookback)
+        assert data.shape[0] - lookback > 1, "sequence can't be less than available data"
+        inputs, outputs = [], []
+        for i in range(len(data) - lookback):
+            feature = data[i : i + lookback]
+            target = data.at[i + lookback, self.target]
+            inputs.append(feature)
+            outputs.append([target])
 
-        return np.array(inputs), np.array(outputs).reshape(-1, 1)
+        return np.array(inputs), np.array(outputs)
 
+    @cache
     def train_test_split(self, sequence_size, test_size: float):
         """calculates the sequences and returns a test_train_split, train data if test=False, test data otherwise"""
+        # this achieves a 80/20 split ratio, e.g. 0.2 test_size implies 0.6 train_size, 0.2 validation_size
+        train_size = 1 - (test_size * 2)
+
         sequences, targets = self.to_sequences(sequence_size)
-        return train_test_split(sequences, targets, test_size=test_size, shuffle=False)
+        sequences = torch.Tensor(sequences).to(torch.float32)
+        targets = torch.Tensor(targets).to(torch.float32)
+        X_train, X_test, y_train, y_test = train_test_split(sequences, targets, train_size=train_size, shuffle=False)
+        X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.5, shuffle=False)
+        return (X_train, y_train), (X_val, y_val), (X_test, y_test)
