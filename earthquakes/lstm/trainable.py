@@ -12,7 +12,7 @@ from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from torch.nn import MSELoss
+from torch.nn import MSELoss, SmoothL1Loss, HuberLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -39,6 +39,7 @@ class LSTMTrainable(tune.Trainable):
         batch_size = config["batch_size"]
         sequence_size = config.get("sequence_size")
         test_size = config.get("test_size")
+        scaler = config.get("scaler")
         self.max_epochs = config.get("max_epochs", 100)
         self.epoch = 0
 
@@ -49,7 +50,7 @@ class LSTMTrainable(tune.Trainable):
             (self.x_train, self.y_train),
             (self.x_val, self.y_val),
             (self.x_test, self.y_test),
-        ) = qdata.train_test_split(sequence_size, test_size)
+        ) = qdata.train_test_split(sequence_size, test_size, scaler)
 
         train_dataset = TensorDataset(self.x_train, self.y_train)
         val_dataset = TensorDataset(self.x_val, self.y_val)
@@ -62,45 +63,57 @@ class LSTMTrainable(tune.Trainable):
         hidden_size = config.get("hidden_size", 1)
         lstm_layers = config.get("num_layers", 1)
 
-        self.model = LSTMModel(feature_size, hidden_size, lstm_layers, 1).to(self.device)
-        self.loss = MSELoss()
+        self.model = LSTMModel(feature_size, hidden_size, lstm_layers).to(self.device)
+        self.loss = SmoothL1Loss()
         self.optimizer = Adam(self.model.parameters(), lr=config["lr"])
 
     def step(self):
         if self.epoch >= self.max_epochs:
             return {"done": True}
 
+        # Training phase
+        self.model.train()
         epoch_loss = 0
         for inputs, outputs in self.train_dataloader:
-            forecast = self.model(inputs.to(self.device))
-            loss = self.loss(forecast, outputs.to(self.device))
+            inputs, outputs = inputs.to(self.device), outputs.to(self.device)
+            forecast = self.model(inputs)
+            loss = self.loss(forecast, outputs)
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
             epoch_loss += loss.item()
 
-        with torch.no_grad():
-            self.model.eval()
-            val_loss = 0
-            val_pred = []
-            for val_input, val_output in self.val_dataloader:
-                y_pred = self.model(val_input.to(self.device))
-                val_loss += self.loss(y_pred, val_output.to(self.device)).item()
-                val_pred.append(y_pred.detach().cpu())
-
-            val_pred = torch.cat(val_pred, dim=0)
-            val_r2 = r2_score(self.y_val.numpy(), val_pred.numpy())
-            val_loss = val_loss / len(self.val_dataloader)
-
-        self.model.train()
         mean_loss = epoch_loss / len(self.train_dataloader)
+
+        # Validation phase
+        val_loss, val_r2 = self.validate()
+
         return {
             "loss": epoch_loss,
             "mean_loss": mean_loss,
             "val_loss": val_loss,
             "val_r2": val_r2,
             "checkpoint_dir_name": "",
+            "done": False,
         }
+
+    def validate(self):
+        self.model.eval()
+        val_loss = 0
+        val_pred = []
+
+        with torch.no_grad():
+            for val_input, val_output in self.val_dataloader:
+                val_input, val_output = val_input.to(self.device), val_output.to(self.device)
+                y_pred = self.model(val_input)
+                val_loss += self.loss(y_pred, val_output).item()
+                val_pred.append(y_pred.cpu())
+
+        val_pred = torch.cat(val_pred, dim=0)
+        val_r2 = r2_score(self.y_val.numpy(), val_pred.numpy())
+        val_loss = val_loss / len(self.val_dataloader)
+
+        return val_loss, val_r2
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
         """saves checkpoint at the end of training"""
@@ -119,14 +132,6 @@ class LSTMTrainable(tune.Trainable):
             self.model.load_state_dict(model_state)
             self.optimizer.load_state_dict(optimizer_state)
 
-    def forecast(self, dataloader: DataLoader):
-        """Runst the model against a dataloader"""
-        self.model.eval()
-        with torch.no_grad():
-            y_preds = []
-            for inputs, _ in dataloader:
-                y_pred = self.model(inputs.to(self.device))
-                y_preds.append(y_pred.detach().cpu())
 
 def plot_scatter(original, forecast, file_path, name="scatter"):
     """
@@ -171,18 +176,18 @@ def plot_scatter(original, forecast, file_path, name="scatter"):
     plt.close(g.figure)
 
 
-def forecast_loader(model, device, dataloader):
+def forecast_loader(model: torch.nn.Module, device: str, dataloader: DataLoader):
     original = []
     forecast = []
     with torch.no_grad():
         model.eval()
         for inputs, outputs in dataloader:
-            y_pred = model(inputs.to(device))
-            original.append(outputs)
-            forecast.append(y_pred)
-    original = torch.cat(original, dim=0).cpu().numpy()
-    forecast = torch.cat(forecast, dim=0).cpu().numpy()
-    return original, forecast
+            inputs, outputs = inputs.to(device), outputs.to(device)
+            y_pred = model(inputs)
+            original.append(outputs.detach().cpu())
+            forecast.append(y_pred.detach().cpu())
+
+    return torch.cat(original, dim=0).numpy(), torch.cat(forecast, dim=0).numpy()
 
 
 def test_result(result: Result, qdata: EarthquakeData):

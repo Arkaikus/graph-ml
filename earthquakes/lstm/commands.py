@@ -14,7 +14,7 @@ from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
 from data.data import EarthquakeData
 
-from lstm.trainable import LSTMTrainable as train_fn, test_result
+from lstm.trainable import LSTMTrainable, test_result
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 def split_n_parse(string: str, _type: type):
     return [_type(part) for part in string.split(",") if part]
+
 
 def prompt_experiment():
     ray_results = Path.home() / "ray_results"
@@ -55,8 +56,6 @@ def load_data(file: str, env: str) -> EarthquakeData:
         drop_time_column=True,
         min_latitude=min(latitude),
         min_longitude=min(longitude),
-        min_magnitude=4,
-        scaler_mode=scaler_mode,
     )
 
 
@@ -68,23 +67,25 @@ def tune_command(file, env, samples):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
     qdata = load_data(file, env)
     logger.info("Processing data...")
-    scheduler = ASHAScheduler(metric="val_r2", mode="max", grace_period=1, reduction_factor=2)
+    scheduler = ASHAScheduler(metric="val_loss", mode="min", grace_period=1, reduction_factor=2)
     trainable = tune.with_parameters(LSTMTrainable, qdata=qdata)
     ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
     tuner = tune.Tuner(
-        tune.with_resources(trainable, resources={"cpu": 8, "gpu": 1}),  # TRAINABLE
-        tune_config=tune.TuneConfig(scheduler=scheduler, num_samples=samples),
+        tune.with_resources(trainable, resources={"cpu": 8, "gpu": 1}),
+        tune_config=tune.TuneConfig(
+            scheduler=scheduler,
+            num_samples=samples,
+            max_concurrent_trials=4,
+        ),
         param_space={
             "test_size": tune.uniform(0.1, 0.3),
             "sequence_size": tune.randint(10, 150),
-            "hidden_size": tune.choice([32, 64, 128]),
-            "num_layers": tune.choice([1, 2, 3]),
+            "hidden_size": tune.randint(32, 128),
+            "num_layers": tune.randint(1, 10),
             "lr": tune.loguniform(1e-4, 1e-2),
             "batch_size": tune.randint(2, 10),
             "max_epochs": tune.randint(25, 100),
-            # "lr": tune.choice([1e-3, 1e-4]),
-            # "batch_size": tune.choice([2, 5, 10]),
-            # "max_epochs": tune.choice([25, 50, 100]),
+            "scaler": tune.choice(["standard", "minmax", None]),
         },
     )
     results = tuner.fit()

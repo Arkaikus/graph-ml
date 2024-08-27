@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 from functools import cache
 
@@ -35,7 +36,6 @@ class EarthquakeData(Hashable):
         min_year: int = 1973,
         min_magnitude: float = 0,
         zero_columns: list = [],
-        scaler_mode="standard",
         min_latitude=None,
         min_longitude=None,
         grid: Grid = None,
@@ -68,17 +68,13 @@ class EarthquakeData(Hashable):
         self.min_year = min_year
         self.min_magnitude = min_magnitude
         self.zero_columns = zero_columns
-
-        self.scaler_mode = scaler_mode
-        self.scaler_class = self.modes.get(scaler_mode)
         self.min_latitude = min_latitude
         self.min_longitude = min_longitude
         self.grid = grid
-        self.scalers = {}
         assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
 
     @property
-    def processed_data(self):
+    def data(self) -> pd.DataFrame:
         if not hasattr(self, "_processed_data"):
             self._processed_data = self.__process()
 
@@ -132,7 +128,7 @@ class EarthquakeData(Hashable):
 
         return processed_data.dropna().reset_index(drop=True)
 
-    def normalize(self, clean_data: pd.DataFrame):
+    def normalize(self, clean_data: pd.DataFrame, mode="minmax"):
         """
         This method will apply sklearn.MinMaxScaler.fit_transform to the 'numeric_columns'
         of the data argument, the minmaxscaler will be set for later use of inverse_transform
@@ -141,7 +137,9 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        if self.scaler_class:
+        scaler_class = self.modes.get(mode)
+        scaler: MinMaxScaler | StandardScaler | None = scaler_class() if scaler_class else None
+        if scaler:
             # Insert event with minimum values before index 0
             min_values_row = data.min().to_frame().transpose()
             min_values_row["latitude"] = float(self.min_latitude)
@@ -155,12 +153,7 @@ class EarthquakeData(Hashable):
                 min_values_row[column] = 0
 
             data = pd.concat([min_values_row, data], ignore_index=True)
-            for column in data.columns:
-                if column in self.numeric_columns:
-                    scaler = self.scaler_class()
-                    data[column] = scaler.fit_transform(data[[column]])
-                    self.scalers[column] = scaler
-
+            data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
             return data.drop(0).reset_index(drop=True)
         else:
             logger.warning("No scaler class detected")
@@ -181,16 +174,14 @@ class EarthquakeData(Hashable):
             data["node"] = self.grid.apply_node(data)
             data = data.astype(dict(node=int))
 
-        return self.normalize(data)
+        return data
 
-    @cache
-    def to_sequences(self, lookback):
+    def to_sequences(self, data, lookback):
         """
         Processes the raw data and returns a two numpy arrays,
         one with sequences of shape (n-1, seq_size, feature_size)
         and target of shape (n-1,)
         """
-        data = self.processed_data
         inputs, outputs = [], []
         logger.debug("Dataframe shape %s", data.shape)
         logger.debug("Sequence length %s", lookback)
@@ -206,12 +197,19 @@ class EarthquakeData(Hashable):
         return np.array(inputs), np.array(outputs)
 
     @cache
-    def train_test_split(self, sequence_size, test_size: float):
-        """calculates the sequences and returns a test_train_split, train data if test=False, test data otherwise"""
+    def train_test_split(self, sequence_size, test_size: float, scaler="minmax"):
+        """
+        Calculates the rolling window sequences and splits the data into train, validation and test sets
+        turns (9999, 5) where 9999 is the number of records and 5 the number of features
+        into (9994, 3, 5) and (9994, 1) if 3 is the sequence size
+        then applies a scaler to the data
+
+        """
         # this achieves a 80/20 split ratio, e.g. 0.2 test_size implies 0.6 train_size, 0.2 validation_size
         train_size = 1 - (test_size * 2)
 
-        sequences, targets = self.to_sequences(sequence_size)
+        data = self.normalize(self.data, mode=scaler)
+        sequences, targets = self.to_sequences(data, sequence_size)
         sequences = torch.Tensor(sequences).to(torch.float32)
         targets = torch.Tensor(targets).to(torch.float32)
         X_train, X_test, y_train, y_test = train_test_split(sequences, targets, train_size=train_size, shuffle=False)
