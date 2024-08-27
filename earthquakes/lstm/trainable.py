@@ -1,20 +1,23 @@
-import logging, pdb
+import logging
 import os
-import pandas as pd
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
 from pathlib import Path
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from torch.nn import MSELoss
 from torch.optim import Adam
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
 from torch.utils.data import DataLoader, TensorDataset
+
+sns.set_theme(style="darkgrid")
+
 
 from data.data import EarthquakeData
 from .model import LSTMModel
@@ -100,20 +103,30 @@ class LSTMTrainable(tune.Trainable):
         }
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
+        """saves checkpoint at the end of training"""
         self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
         checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint.pth")
         state = (self.model.state_dict(), self.optimizer.state_dict())
         torch.save(state, checkpoint_path)
 
     def load_checkpoint(self, checkpoint: Checkpoint):
+        """loads checkpoint at the start of training  if checkpoint exists"""
         self.logger.info("Loading checkpoint %s", checkpoint)
         with checkpoint.as_directory() as loaded_checkpoint_dir:
             logger.info("Loading checkpoint %s", loaded_checkpoint_dir)
             checkpoint_path = os.path.join(loaded_checkpoint_dir, "checkpoint.pth")
-            model_state, optimizer_state = torch.load(checkpoint_path)
+            model_state, optimizer_state = torch.load(checkpoint_path, map_location=torch.device("cpu"))
             self.model.load_state_dict(model_state)
             self.optimizer.load_state_dict(optimizer_state)
 
+    def forecast(self, dataloader: DataLoader):
+        """Runst the model against a dataloader"""
+        self.model.eval()
+        with torch.no_grad():
+            y_preds = []
+            for inputs, _ in dataloader:
+                y_pred = self.model(inputs.to(self.device))
+                y_preds.append(y_pred.detach().cpu())
 
 def plot_scatter(original, forecast, file_path, name="scatter"):
     """

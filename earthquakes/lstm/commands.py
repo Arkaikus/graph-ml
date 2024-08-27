@@ -1,5 +1,8 @@
 import logging
 import os
+import pdb
+from pathlib import Path
+
 import click
 import pandas as pd
 from dotenv import load_dotenv
@@ -9,15 +12,16 @@ from ray import tune
 from ray.tune import ExperimentAnalysis, ResultGrid
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
-from lstm.trainable import LSTMTrainable, test_result
 from data.data import EarthquakeData
+
+from lstm.trainable import LSTMTrainable as train_fn, test_result
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
 
-experiment_path = Path(os.getcwd()) / "ray_results"
-experiment_path.mkdir(exist_ok=True)
 
+def split_n_parse(string: str, _type: type):
+    return [_type(part) for part in string.split(",") if part]
 
 def prompt_experiment():
     ray_results = Path.home() / "ray_results"
@@ -51,6 +55,8 @@ def load_data(file: str, env: str) -> EarthquakeData:
         drop_time_column=True,
         min_latitude=min(latitude),
         min_longitude=min(longitude),
+        min_magnitude=4,
+        scaler_mode=scaler_mode,
     )
 
 
@@ -98,7 +104,6 @@ def test_command(experiment_path, env):
     result_grid = ResultGrid(analysis)
     result = result_grid.get_best_result("loss", "min")
     qdata = load_data(None, env)
-    logger.info("Processing data...")
     test_result(result, qdata)
 
 
