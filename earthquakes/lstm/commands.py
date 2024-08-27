@@ -14,7 +14,7 @@ from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
 from data.data import EarthquakeData
 
-from lstm.trainable import LSTMTrainable, test_result
+from lstm.ptorch.trainable import LSTMTrainable, test_result
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
