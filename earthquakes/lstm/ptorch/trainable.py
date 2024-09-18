@@ -11,9 +11,10 @@ from pathlib import Path
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from torch.nn import MSELoss, SmoothL1Loss, HuberLoss
-from torch.optim import Adam
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
+
+import torch.nn as nn
+import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 sns.set_theme(style="darkgrid")
@@ -35,85 +36,78 @@ class LSTMTrainable(tune.Trainable):
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(self.trial_id)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        self.qdata = qdata
 
-        batch_size = config["batch_size"]
-        sequence_size = config.get("sequence_size")
+        lookback = config.get("lookback")
         test_size = config.get("test_size")
-        scaler = config.get("scaler")
+        batch_size = config["batch_size"]
+        hidden_size = config.get("hidden_size", 1)
+        lstm_layers = config.get("lstm_layers", 2)
+        learning_rate = config["lr"]
+
         self.max_epochs = config.get("max_epochs", 100)
         self.epoch = 0
 
-        assert sequence_size, "[sequence_size] cannot be None"
+        assert lookback, "[lookback] cannot be None"
 
-        # prepare train test split of data
         (
+            # shapes: ((1-test_size)*N, F, Lookback), (test_size*N, Lookback, 1)
             (self.x_train, self.y_train),
-            (self.x_val, self.y_val),
             (self.x_test, self.y_test),
-        ) = qdata.train_test_split(sequence_size, test_size, scaler)
+        ) = self.qdata.train_test_split(lookback, test_size, "standard")
 
-        train_dataset = TensorDataset(self.x_train, self.y_train)
-        val_dataset = TensorDataset(self.x_val, self.y_val)
-        test_dataset = TensorDataset(self.x_test, self.y_test)
-        self.train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-        self.val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-        self.test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        self.train_dataset = TensorDataset(self.x_train, self.y_train)
+        self.test_dataset = TensorDataset(self.x_test, self.y_test)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size)
+        self.test_loader = DataLoader(self.test_dataset, batch_size=batch_size)
 
-        feature_size = self.x_train.shape[2]  # 0:batch, 1:lookback 2:features
-        hidden_size = config.get("hidden_size", 1)
-        lstm_layers = config.get("num_layers", 1)
-
-        self.model = LSTMModel(feature_size, hidden_size, lstm_layers).to(self.device)
-        self.loss = SmoothL1Loss()
-        self.optimizer = Adam(self.model.parameters(), lr=config["lr"])
+        self.model = LSTMModel(lookback, hidden_size, lstm_layers).to(self.device)
+        self.loss = nn.HuberLoss().to(self.device)
+        self.optimizer = optim.RMSprop(self.model.parameters(), lr=learning_rate)
+        self.patience = 5
+        self.best_loss = np.inf
 
     def step(self):
-        if self.epoch >= self.max_epochs:
-            return {"done": True}
+        done = self.epoch >= self.max_epochs - 1
 
         # Training phase
         self.model.train()
         epoch_loss = 0
-        for inputs, outputs in self.train_dataloader:
-            inputs, outputs = inputs.to(self.device), outputs.to(self.device)
-            forecast = self.model(inputs)
-            loss = self.loss(forecast, outputs)
+        for input_batch, output_batch in self.train_loader:
+            input_batch, output_batch = input_batch.to(self.device), output_batch.to(self.device)
+
             self.optimizer.zero_grad()
+
+            # forward pass
+            output = self.model(input_batch)
+            loss = self.loss(output, output_batch[:, -1])
+
+            # backward pass and optimize
             loss.backward()
             self.optimizer.step()
-            epoch_loss += loss.item()
 
-        mean_loss = epoch_loss / len(self.train_dataloader)
+            # statistics
+            batch_loss = loss.item()
+            epoch_loss += batch_loss
 
-        # Validation phase
-        val_loss, val_r2 = self.validate()
+        mean_loss = epoch_loss / len(self.train_loader)
+        logger.info("Epoch loss: %.3f Mean loss: %.3f Patience: %s", epoch_loss, mean_loss, self.patience)
+
+        if epoch_loss < self.best_loss:
+            self.best_loss = epoch_loss
+            self.patience = min(self.patience + 1, 10)
+        elif not done:
+            self.patience -= 1
+            if self.patience == 0:
+                self.logger.info("Early stopping")
+                done = True
 
         return {
             "loss": epoch_loss,
             "mean_loss": mean_loss,
-            "val_loss": val_loss,
-            "val_r2": val_r2,
             "checkpoint_dir_name": "",
-            "done": False,
+            "done": done,
         }
-
-    def validate(self):
-        self.model.eval()
-        val_loss = 0
-        val_pred = []
-
-        with torch.no_grad():
-            for val_input, val_output in self.val_dataloader:
-                val_input, val_output = val_input.to(self.device), val_output.to(self.device)
-                y_pred = self.model(val_input)
-                val_loss += self.loss(y_pred, val_output).item()
-                val_pred.append(y_pred.cpu())
-
-        val_pred = torch.cat(val_pred, dim=0)
-        val_r2 = r2_score(self.y_val.numpy(), val_pred.numpy())
-        val_loss = val_loss / len(self.val_dataloader)
-
-        return val_loss, val_r2
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
         """saves checkpoint at the end of training"""
@@ -132,6 +126,19 @@ class LSTMTrainable(tune.Trainable):
             self.model.load_state_dict(model_state)
             self.optimizer.load_state_dict(optimizer_state)
 
+    def forecast(self):
+        self.model.eval()
+        with torch.no_grad():
+            train_output = [self.model(x.to(self.device)) for x, _ in self.train_loader]
+            test_output = [self.model(x.to(self.device)) for x, _ in self.test_loader]
+            train_output = torch.cat(train_output, dim=0)
+            test_output = torch.cat(test_output, dim=0)
+
+        return (
+            (self.y_train[:, -1].numpy(), train_output.detach().cpu().numpy()),
+            (self.y_test[:, -1].numpy(), test_output.detach().cpu().numpy()),
+        )
+
 
 def plot_scatter(original, forecast, file_path, name="scatter"):
     """
@@ -142,11 +149,13 @@ def plot_scatter(original, forecast, file_path, name="scatter"):
     MSE = mean_squared_error(original, forecast)
     MAE = mean_absolute_error(original, forecast)
     R2 = r2_score(original, forecast)
+    MAPE = mean_absolute_percentage_error(original, forecast)
     RMSE = np.sqrt(MSE)
     logger.info("Best trial R2 %s", R2)
     logger.info("Best trial MSE: %s", MSE)
     logger.info("Best trial RMSE: %s", RMSE)
     logger.info("Best trial MAE: %s", MAE)
+    logger.info("Best trial MAPE: %s", MAPE)
 
     hstack = np.hstack((original, forecast))
     logger.info("Hstack %s", hstack.shape)
@@ -176,18 +185,19 @@ def plot_scatter(original, forecast, file_path, name="scatter"):
     plt.close(g.figure)
 
 
-def forecast_loader(model: torch.nn.Module, device: str, dataloader: DataLoader):
-    original = []
-    forecast = []
-    with torch.no_grad():
-        model.eval()
-        for inputs, outputs in dataloader:
-            inputs, outputs = inputs.to(device), outputs.to(device)
-            y_pred = model(inputs)
-            original.append(outputs.detach().cpu())
-            forecast.append(y_pred.detach().cpu())
+def plot_timeseries(original, forecast, target: str, file_path, name="timeseries"):
+    fig, ax = plt.subplots(figsize=(30, 5))
+    ax.plot(original, label="Real")
+    ax.plot(forecast, label="Forecast")
+    ax.legend()
+    plt.title("Test Data Real vs Forecast")
+    plt.xlabel("Time")
+    plt.ylabel(target.capitalize())
 
-    return torch.cat(original, dim=0).numpy(), torch.cat(forecast, dim=0).numpy()
+    save_to = Path(file_path) / f"{name}.png"
+    logger.info("Figure saved to %s", save_to)
+    fig.savefig(save_to)
+    plt.close(fig)
 
 
 def test_result(result: Result, qdata: EarthquakeData):
@@ -198,24 +208,13 @@ def test_result(result: Result, qdata: EarthquakeData):
 
     print(result.metrics_dataframe)
 
-    original, forecast = forecast_loader(trainable.model, trainable.device, trainable.train_dataloader)
-    plot_scatter(original, forecast, result.path, name="train_scatter")
+    (
+        (train_original, train_forecast),
+        (test_original, test_forecast),
+    ) = trainable.forecast()
 
-    original, forecast = forecast_loader(trainable.model, trainable.device, trainable.val_dataloader)
-    plot_scatter(original, forecast, result.path, name="val_scatter")
-
-    original, forecast = forecast_loader(trainable.model, trainable.device, trainable.test_dataloader)
-    plot_scatter(original, forecast, result.path, name="test_scatter")
-
-    # create a
-    fig, ax = plt.subplots(figsize=(30, 5))
-    ax.plot(original, label="Real")
-    ax.plot(forecast, label="Forecast")
-    ax.legend()
-    plt.title("Test Data Real vs Forecast")
-    plt.xlabel("Time")
-    plt.ylabel("Magnitude")
-    save_to = Path(result.path) / "forecast.png"
-    logger.info("Figure saved to %s", save_to)
-    fig.savefig(save_to)
-    plt.close(fig)
+    (target,) = trainable.qdata.targets
+    plot_scatter(train_original, train_forecast, result.path, name="train_scatter")
+    plot_scatter(test_original, test_forecast, result.path, name="test_scatter")
+    plot_timeseries(train_original, train_forecast, target, result.path, name="train_timeseries")
+    plot_timeseries(test_original, test_forecast, target, result.path, name="test_timeseries")

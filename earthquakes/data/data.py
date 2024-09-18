@@ -27,14 +27,15 @@ class EarthquakeData(Hashable):
     def __init__(
         self,
         raw_data: pd.DataFrame,
-        numeric_columns: list,
-        target: str,
+        features: list,
+        targets: list[str],
         time_column: bool = False,
         drop_time_column: bool = False,
         delta_time: bool = False,
         delta_type: str = "timedelta64[s]",
         min_year: int = 1973,
         min_magnitude: float = 0,
+        max_magnitude: float = 6,
         zero_columns: list = [],
         min_latitude=None,
         min_longitude=None,
@@ -43,8 +44,8 @@ class EarthquakeData(Hashable):
         """
         Parameters
         ----------
-        numeric_columns : list
-            list of the csv numeric columns to use.
+        features : list
+            list of the csv numeric columns to use that are numeric.
         time_column : bool, default=False
             whether the csv file has the date/time column available.
         drop_time_column : bool, default=False
@@ -59,14 +60,15 @@ class EarthquakeData(Hashable):
             if set filters events with magnitude > min_magnitude
         """
         self.raw_data = raw_data
-        self.numeric_columns = numeric_columns
-        self.target = target
+        self.features = features
+        self.targets = targets
         self.time_column = time_column
         self.drop_time_column = drop_time_column
         self.delta_time = delta_time
         self.delta_type = delta_type
         self.min_year = min_year
         self.min_magnitude = min_magnitude
+        self.max_magnitude = max_magnitude
         self.zero_columns = zero_columns
         self.min_latitude = min_latitude
         self.min_longitude = min_longitude
@@ -91,20 +93,21 @@ class EarthquakeData(Hashable):
 
         """
         processed_data = self.raw_data.copy()
-        for column in self.numeric_columns:
+        for column in self.features:
             assert column in processed_data.columns, f"[{column}] is not in the dataframe"
 
         # Treat columns as numeric values and coerce NaN values
-        processed_data[self.numeric_columns] = processed_data[self.numeric_columns].apply(
-            pd.to_numeric, errors="coerce"
-        )
+        processed_data[self.features] = processed_data[self.features].apply(pd.to_numeric, errors="coerce")
+
         # Filter events with magnitude > self.min_magnitude
-        if "mag" in self.numeric_columns:
-            processed_data = processed_data[processed_data["mag"] > self.min_magnitude]
+        if "mag" in self.features:
+            mag_mask = (processed_data["mag"] > self.min_magnitude) & (processed_data["mag"] < self.max_magnitude)
+            processed_data = processed_data[mag_mask]
+            processed_data = processed_data[processed_data["magType"].isin(("mb",))]
 
         if self.time_column:
             assert "time" in processed_data.columns, "[time] column is not in the dataframe"
-            processed_data = processed_data[["time"] + self.numeric_columns]
+            processed_data = processed_data[["time"] + self.features]
             processed_data["time"] = pd.to_datetime(processed_data["time"], errors="coerce")
             # Filter events with year greater than self.min_year
             if self.min_year:
@@ -114,9 +117,10 @@ class EarthquakeData(Hashable):
 
             # If delta_time=True calculates the time difference between events in days by default
             if self.delta_time:
-                self.numeric_columns.append("delta")
-                delta_values = processed_data["time"] - processed_data["time"].shift()
-                delta_values.at[0] = pd.Timedelta(0)
+                self.features.append("delta")
+                # delta_values = processed_data["time"] - processed_data["time"].shift()
+                # delta_values.at[0] = pd.Timedelta(0)
+                delta_values = processed_data["time"].diff().fillna(pd.Timedelta(seconds=0))
                 processed_data["delta"] = pd.to_numeric(delta_values.astype("timedelta64[s]"))
                 if "delta" not in self.zero_columns:
                     self.zero_columns.append("delta")
@@ -124,11 +128,11 @@ class EarthquakeData(Hashable):
             if self.drop_time_column:
                 processed_data.drop("time", axis=1, inplace=True)
         else:
-            processed_data = processed_data[self.numeric_columns]
+            processed_data = processed_data[self.features]
 
         return processed_data.dropna().reset_index(drop=True)
 
-    def normalize(self, clean_data: pd.DataFrame, mode="minmax"):
+    def normalize(self, clean_data: pd.DataFrame, mode="standard"):
         """
         This method will apply sklearn.MinMaxScaler.fit_transform to the 'numeric_columns'
         of the data argument, the minmaxscaler will be set for later use of inverse_transform
@@ -137,9 +141,9 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        scaler_class = self.modes.get(mode)
-        scaler: MinMaxScaler | StandardScaler | None = scaler_class() if scaler_class else None
-        if scaler:
+        # scaler_class = self.modes.get(mode)
+        # scaler: MinMaxScaler | StandardScaler | None = scaler_class() if scaler_class else None
+        if mode == "minmax":
             # Insert event with minimum values before index 0
             min_values_row = data.min().to_frame().transpose()
             min_values_row["latitude"] = float(self.min_latitude)
@@ -153,8 +157,15 @@ class EarthquakeData(Hashable):
                 min_values_row[column] = 0
 
             data = pd.concat([min_values_row, data], ignore_index=True)
+            scaler = MinMaxScaler()
             data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
             return data.drop(0).reset_index(drop=True)
+        elif mode == "standard":
+            scaler = StandardScaler()
+            data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
+
+            # min_value = np.min(data)
+            # data = data - min_value # Shift to positive values
         else:
             logger.warning("No scaler class detected")
 
@@ -168,36 +179,59 @@ class EarthquakeData(Hashable):
         """
 
         data = self.clean()
-        assert self.target in data
+        assert all(t in data for t in self.targets)
 
         if self.grid:
             data["node"] = self.grid.apply_node(data)
             data = data.astype(dict(node=int))
 
+        # data["latitude_longitude"] = data["latitude"] * data["longitude"]
+        # self.features.append("latitude_longitude")
         return data
 
-    def to_sequences(self, data, lookback):
+    def to_sequences(self, data: pd.DataFrame, lookback):
         """
         Processes the raw data and returns a two numpy arrays,
-        one with sequences of shape (n-1, seq_size, feature_size)
-        and target of shape (n-1,)
-        """
-        inputs, outputs = [], []
-        logger.debug("Dataframe shape %s", data.shape)
-        logger.debug("Sequence length %s", lookback)
-        logger.debug("Available sequences %s", data.shape[0] // lookback)
-        assert data.shape[0] - lookback > 1, "sequence can't be less than available data"
-        inputs, outputs = [], []
-        for i in range(len(data) - lookback):
-            feature = data[i : i + lookback]
-            target = data.at[i + lookback, self.target]
-            inputs.append(feature)
-            outputs.append([target])
+        one with shape (len(data) -lookback, S, F)
+        and target of shape (len(data) -lookback,)
 
-        return np.array(inputs), np.array(outputs)
+        where S is the number of sequences by feature
+        F is the number of features in a sequence, aka lookback
+
+        example:
+        data.columns = ['latitude','longitude','magnitude']
+        lookback = 10
+
+        there will be 3 sequences of size 10 per window
+        number of windows = len(data) - lookback
+
+        [
+            [# first window
+              # [<---- lookback --->] # size of sequence
+                [1,2,3,4,5,6,7,8,9,0] # sequence 1 of latitude
+                [1,2,3,4,5,6,7,8,9,0] # sequence 2 of longitude
+                [1,2,3,4,5,6,7,8,9,0] # sequence 3 of magnitude
+            ],
+            ...
+        ]
+        """
+        input_chunks = []
+        output_chunks = []
+        sequences = data.shape[0] - lookback
+
+        for i in range(sequences):
+            end = i + lookback
+            input_chunk = data.iloc[i:end][self.features]
+            output_chunk = data.iloc[i + 1 : end + 1][self.targets]
+            input_chunks.append(input_chunk)
+            output_chunks.append(output_chunk)
+
+        inputs = np.stack(input_chunks)
+        outputs = np.array(output_chunks)
+        return np.transpose(inputs, (0, 2, 1)), outputs  # [:, -1, :]
 
     @cache
-    def train_test_split(self, sequence_size, test_size: float, scaler="minmax"):
+    def train_test_split(self, sequence_size, test_size: float, scaler="standard", torch_tensor=True):
         """
         Calculates the rolling window sequences and splits the data into train, validation and test sets
         turns (9999, 5) where 9999 is the number of records and 5 the number of features
@@ -205,13 +239,11 @@ class EarthquakeData(Hashable):
         then applies a scaler to the data
 
         """
-        # this achieves a 80/20 split ratio, e.g. 0.2 test_size implies 0.6 train_size, 0.2 validation_size
-        train_size = 1 - (test_size * 2)
 
         data = self.normalize(self.data, mode=scaler)
         sequences, targets = self.to_sequences(data, sequence_size)
-        sequences = torch.Tensor(sequences).to(torch.float32)
-        targets = torch.Tensor(targets).to(torch.float32)
-        X_train, X_test, y_train, y_test = train_test_split(sequences, targets, train_size=train_size, shuffle=False)
-        X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.5, shuffle=False)
-        return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+        if torch_tensor:
+            sequences = torch.Tensor(sequences).to(torch.float32)
+            targets = torch.Tensor(targets).to(torch.float32)
+        X_train, X_test, y_train, y_test = train_test_split(sequences, targets, test_size=test_size, shuffle=False)
+        return ((X_train, y_train), (X_test, y_test))

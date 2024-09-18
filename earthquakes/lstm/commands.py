@@ -1,6 +1,5 @@
 import logging
 import os
-import pdb
 from pathlib import Path
 
 import click
@@ -49,13 +48,15 @@ def load_data(file: str, env: str) -> EarthquakeData:
     return EarthquakeData(
         raw_data,
         ["latitude", "longitude", "depth", "mag"],
-        "mag",
+        ["mag"],
         zero_columns=["depth", "mag"],  # can be zero when scaling
         time_column=True,
         delta_time=True,
         drop_time_column=True,
         min_latitude=min(latitude),
         min_longitude=min(longitude),
+        min_magnitude=0,
+        max_magnitude=9,
     )
 
 
@@ -63,12 +64,16 @@ def load_data(file: str, env: str) -> EarthquakeData:
 @click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
 @click.option("-e", "--env", type=str, help="env")
 @click.option("-s", "--samples", type=int, help="samples", default=200)
+# @click.option("-m", "--mode", type=str, help="pytorch/tensorflow", default="pytorch")
 def tune_command(file, env, samples):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
     qdata = load_data(file, env)
     logger.info("Processing data...")
-    scheduler = ASHAScheduler(metric="val_loss", mode="min", grace_period=1, reduction_factor=2)
+    metric = "loss"
+    opt_mode = "min"
+    scheduler = ASHAScheduler(metric=metric, mode=opt_mode, grace_period=1, reduction_factor=2)
     trainable = tune.with_parameters(LSTMTrainable, qdata=qdata)
+
     ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
     tuner = tune.Tuner(
         tune.with_resources(trainable, resources={"cpu": 8, "gpu": 1}),
@@ -78,32 +83,32 @@ def tune_command(file, env, samples):
             max_concurrent_trials=4,
         ),
         param_space={
+            "lookback": tune.randint(10, 150),
             "test_size": tune.uniform(0.1, 0.3),
-            "sequence_size": tune.randint(10, 150),
+            "batch_size": tune.randint(2, 20),
             "hidden_size": tune.randint(32, 128),
-            "num_layers": tune.randint(1, 10),
+            "lstm_layers": tune.randint(2, 10),
             "lr": tune.loguniform(1e-4, 1e-2),
-            "batch_size": tune.randint(2, 10),
-            "max_epochs": tune.randint(25, 100),
-            "scaler": tune.choice(["standard", "minmax", None]),
+            "max_epochs": tune.randint(10, 50),
         },
     )
     results = tuner.fit()
 
     logger.info("Results path at %s", results.experiment_path)
-    best_result = results.get_best_result("loss", "min")
+    best_result = results.get_best_result(metric, opt_mode)
     test_result(best_result, qdata)
 
 
 @click.command(name="test")
 @click.option("-ex", "--experiment-path", type=str, help="experiment path", default=None)
 @click.option("-e", "--env", type=str, help="env path", default=None)
+# @click.option("-m", "--mode", type=str, help="pytorch/tensorflow", default="pytorch")
 def test_command(experiment_path, env):
     result_path = Path(experiment_path).resolve() if experiment_path else prompt_experiment()
     logger.info("Loading %s", result_path)
     analysis = ExperimentAnalysis(result_path)
     result_grid = ResultGrid(analysis)
-    result = result_grid.get_best_result("loss", "min")
+    result = result_grid.get_best_result("val_loss", "min")
     qdata = load_data(None, env)
     test_result(result, qdata)
 
