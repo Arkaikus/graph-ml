@@ -185,18 +185,18 @@ class EarthquakeData(Hashable):
             data["node"] = self.grid.apply_node(data)
             data = data.astype(dict(node=int))
 
-        # data["latitude_longitude"] = data["latitude"] * data["longitude"]
-        # self.features.append("latitude_longitude")
         return data
 
-    def to_sequences(self, data: pd.DataFrame, lookback):
+    def to_sequences(self, data: pd.DataFrame, lookback, features=None, targets=None):
         """
         Processes the raw data and returns a two numpy arrays,
         one with shape (len(data) -lookback, S, F)
-        and target of shape (len(data) -lookback,)
+        and target of shape (len(data) -lookback, lookback)
 
-        where S is the number of sequences by feature
-        F is the number of features in a sequence, aka lookback
+        where S is the number of sequences, each sequence holds a feature
+        F is the number of feature values in the sequence, aka lookback
+
+        target holds the next event window of size lookback
 
         example:
         data.columns = ['latitude','longitude','magnitude']
@@ -205,15 +205,25 @@ class EarthquakeData(Hashable):
         there will be 3 sequences of size 10 per window
         number of windows = len(data) - lookback
 
-        [
+        output1 = [
             [# first window
               # [<---- lookback --->] # size of sequence
-                [1,2,3,4,5,6,7,8,9,0] # sequence 1 of latitude
-                [1,2,3,4,5,6,7,8,9,0] # sequence 2 of longitude
-                [1,2,3,4,5,6,7,8,9,0] # sequence 3 of magnitude
+                [1,2,3,4,5,6,7,8,9,10] # sequence 1 of latitude
+                [1,2,3,4,5,6,7,8,9,10] # sequence 2 of longitude
+                [1,2,3,4,5,6,7,8,9,10] # sequence 3 of magnitude
             ],
             ...
         ]
+        output2 = [
+            [# first target window
+              # [<---- lookback --->] # size of sequence
+                [2,3,4,5,6,7,8,9,10,11] # sequence 1 of target
+                ...
+            ],
+            ...
+        ]
+
+        for 100 events output would be (90, 3, 10) and (90, 10)
         """
         input_chunks = []
         output_chunks = []
@@ -221,23 +231,25 @@ class EarthquakeData(Hashable):
 
         for i in range(sequences):
             end = i + lookback
-            input_chunk = data.iloc[i:end][self.features]
-            output_chunk = data.iloc[i + 1 : end + 1][self.targets]
+            input_chunk = data.iloc[i:end][features or self.features]
+            output_chunk = data.iloc[i + 1 : end + 1][targets or self.targets]
             input_chunks.append(input_chunk)
             output_chunks.append(output_chunk)
 
         inputs = np.stack(input_chunks)
         outputs = np.array(output_chunks)
-        return np.transpose(inputs, (0, 2, 1)), outputs  # [:, -1, :]
+        return np.transpose(inputs, (0, 2, 1)), outputs
 
     @cache
-    def train_test_split(self, sequence_size, test_size: float, scaler="standard", torch_tensor=True):
+    def train_test_split(self, sequence_size, test_size: float, scaler="standard", torch_tensor=True, shuffle=False):
         """
-        Calculates the rolling window sequences and splits the data into train, validation and test sets
-        turns (9999, 5) where 9999 is the number of records and 5 the number of features
-        into (9994, 3, 5) and (9994, 1) if 3 is the sequence size
-        then applies a scaler to the data
-
+        Returns the train test split after creating sequences of the normalized data
+        :params sequence_size: int, the length of the sequence by feature
+        :params test_size: float, the percentage of the test size
+        :params scaler: str, the type of scaler to use
+        :params torch_tensor: bool, whether to convert the numpy arrays to torch tensors
+        :params shuffle: bool, whether to shuffle the data before splitting
+            false by default, due to the nature of time series data
         """
 
         data = self.normalize(self.data, mode=scaler)
@@ -245,5 +257,11 @@ class EarthquakeData(Hashable):
         if torch_tensor:
             sequences = torch.Tensor(sequences).to(torch.float32)
             targets = torch.Tensor(targets).to(torch.float32)
-        X_train, X_test, y_train, y_test = train_test_split(sequences, targets, test_size=test_size, shuffle=False)
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            sequences,
+            targets,
+            test_size=test_size,
+            shuffle=shuffle,
+        )
         return ((X_train, y_train), (X_test, y_test))
