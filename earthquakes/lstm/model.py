@@ -9,7 +9,7 @@ class LSTMModel(nn.Module):
     https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html
     """
 
-    def __init__(self, lookback: int, hidden_size: int, num_layers: int):
+    def __init__(self, lookback: int, outputs:int, hidden_size: int, num_layers: int):
         """
         Call LSTM layers take a (seq_size, lookback) tensor, and outputs a hidden_size tensor
         for batch processing batch_first is enabled so we would process (batch, seq_size, lookback)
@@ -21,7 +21,7 @@ class LSTMModel(nn.Module):
         # this would preferably be equivalent to the number of lookbacks
         self.lstm = nn.LSTM(lookback, hidden_size, num_layers, batch_first=True)
         self.flatten = nn.Flatten()
-        self.linear = nn.LazyLinear(1)
+        self.linear = nn.LazyLinear(outputs)
 
     def forward(self, batch_input):
         # batch input is (batch_size, sequence, lookback)

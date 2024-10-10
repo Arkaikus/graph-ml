@@ -2,26 +2,19 @@ import logging
 import os
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import seaborn as sns
 import torch
-from pathlib import Path
+import torch.nn as nn
+import torch.optim as optim
+from data.data import EarthquakeData
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
-
-import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
+from torchmetrics.regression import MeanAbsolutePercentageError
 
-sns.set_theme(style="darkgrid")
-
-
-from data.data import EarthquakeData
 from .model import LSTMModel
+from .plot import plot_scatter, plot_timeseries
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +37,8 @@ class LSTMTrainable(tune.Trainable):
         hidden_size = config.get("hidden_size", 1)
         lstm_layers = config.get("lstm_layers", 2)
         learning_rate = config["lr"]
+        loss_type = config.get("loss_type", "mse")
+        shuffle = config.get("shuffle", False)
 
         self.max_epochs = config.get("max_epochs", 100)
         self.epoch = 0
@@ -58,29 +53,32 @@ class LSTMTrainable(tune.Trainable):
 
         self.train_dataset = TensorDataset(self.x_train, self.y_train)
         self.test_dataset = TensorDataset(self.x_test, self.y_test)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size)
-        self.test_loader = DataLoader(self.test_dataset, batch_size=batch_size)
+        self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size, shuffle=shuffle)
+        self.test_loader = DataLoader(self.test_dataset, batch_size=batch_size, shuffle=shuffle)
 
-        self.model = LSTMModel(lookback, hidden_size, lstm_layers).to(self.device)
-        self.loss = nn.HuberLoss().to(self.device)
+        self.model = LSTMModel(lookback, len(qdata.targets), hidden_size, lstm_layers).to(self.device)
+        loss_types = {"mse": nn.MSELoss, "huber": nn.HuberLoss, "mape": MeanAbsolutePercentageError, "mae": nn.L1Loss}
+        loss_class = loss_types.get(loss_type, nn.MSELoss)
+        self.loss = loss_class().to(self.device)
         self.optimizer = optim.RMSprop(self.model.parameters(), lr=learning_rate)
         self.patience = 5
         self.best_loss = np.inf
 
     def step(self):
+        self.epoch += 1
         done = self.epoch >= self.max_epochs - 1
 
         # Training phase
         self.model.train()
         epoch_loss = 0
         for input_batch, output_batch in self.train_loader:
-            input_batch, output_batch = input_batch.to(self.device), output_batch.to(self.device)
+            input_batch, output_batch = input_batch.to(self.device), output_batch[:, -1].to(self.device)
 
             self.optimizer.zero_grad()
 
             # forward pass
             output = self.model(input_batch)
-            loss = self.loss(output, output_batch[:, -1])
+            loss = self.loss(output, output_batch)
 
             # backward pass and optimize
             loss.backward()
@@ -91,23 +89,43 @@ class LSTMTrainable(tune.Trainable):
             epoch_loss += batch_loss
 
         mean_loss = epoch_loss / len(self.train_loader)
-        logger.info("Epoch loss: %.3f Mean loss: %.3f Patience: %s", epoch_loss, mean_loss, self.patience)
 
         if epoch_loss < self.best_loss:
             self.best_loss = epoch_loss
             self.patience = min(self.patience + 1, 10)
         elif not done:
             self.patience -= 1
-            if self.patience == 0:
+            if self.patience <= 0:
                 self.logger.info("Early stopping")
                 done = True
 
-        return {
+        # Assuming test_loader is defined with your test dataset
+        self.model.eval()
+        test_loss = 0
+        total_samples = 0
+
+        with torch.no_grad():
+            for input_batch, output_batch in self.test_loader:
+                input_batch, output_batch = input_batch.to(self.device), output_batch[:, -1].to(self.device)
+
+                output = self.model(input_batch)
+                loss = self.loss(output, output_batch)
+                test_loss += loss.item() * input_batch.size(0)  # Accumulate loss
+                total_samples += input_batch.size(0)
+
+        mean_test_loss = test_loss / total_samples
+
+        metrics = {
             "loss": epoch_loss,
             "mean_loss": mean_loss,
+            "test_loss": test_loss,
+            "mean_test_loss": mean_test_loss,
             "checkpoint_dir_name": "",
+            "patience": self.patience,
             "done": done,
         }
+        logger.info("Metrics: %s", metrics)
+        return metrics
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
         """saves checkpoint at the end of training"""
@@ -140,66 +158,6 @@ class LSTMTrainable(tune.Trainable):
         )
 
 
-def plot_scatter(original, forecast, file_path, name="scatter"):
-    """
-    Plots a scatter plot of the forecast against the original data with metrics
-    this is useful for visualizing the performance of the model
-    it uses seaborn to plot the scatter plot with a regression line
-    """
-    MSE = mean_squared_error(original, forecast)
-    MAE = mean_absolute_error(original, forecast)
-    R2 = r2_score(original, forecast)
-    MAPE = mean_absolute_percentage_error(original, forecast)
-    RMSE = np.sqrt(MSE)
-    logger.info("Best trial R2 %s", R2)
-    logger.info("Best trial MSE: %s", MSE)
-    logger.info("Best trial RMSE: %s", RMSE)
-    logger.info("Best trial MAE: %s", MAE)
-    logger.info("Best trial MAPE: %s", MAPE)
-
-    hstack = np.hstack((original, forecast))
-    logger.info("Hstack %s", hstack.shape)
-
-    g = sns.jointplot(
-        x="Real",
-        y="Forecast",
-        data=pd.DataFrame(hstack, columns=["Real", "Forecast"]),
-        kind="reg",
-        truncate=False,
-        color="m",
-        height=7,
-    )
-
-    # Add metrics to the plot
-    plt.figtext(
-        0.15,
-        0.70,
-        f"R2: {R2:.2f}\nMSE: {MSE:.2f}\nMAE: {MAE:.2f}",
-        bbox=dict(facecolor="white", alpha=0.5),
-        fontsize=12,
-    )
-
-    save_to = Path(file_path) / f"{name}.png"
-    logger.info("Figure saved to %s", save_to)
-    g.figure.savefig(save_to)
-    plt.close(g.figure)
-
-
-def plot_timeseries(original, forecast, target: str, file_path, name="timeseries"):
-    fig, ax = plt.subplots(figsize=(30, 5))
-    ax.plot(original, label="Real")
-    ax.plot(forecast, label="Forecast")
-    ax.legend()
-    plt.title("Test Data Real vs Forecast")
-    plt.xlabel("Time")
-    plt.ylabel(target.capitalize())
-
-    save_to = Path(file_path) / f"{name}.png"
-    logger.info("Figure saved to %s", save_to)
-    fig.savefig(save_to)
-    plt.close(fig)
-
-
 def test_result(result: Result, qdata: EarthquakeData):
     logger.info("Loading testing from config")
     trainable = LSTMTrainable.with_parameters(result.config, qdata)
@@ -208,13 +166,16 @@ def test_result(result: Result, qdata: EarthquakeData):
 
     print(result.metrics_dataframe)
 
-    (
-        (train_original, train_forecast),
-        (test_original, test_forecast),
-    ) = trainable.forecast()
+    ((train_y, train_pred), (test_y, test_pred)) = trainable.forecast()
 
-    (target,) = trainable.qdata.targets
-    plot_scatter(train_original, train_forecast, result.path, name="train_scatter")
-    plot_scatter(test_original, test_forecast, result.path, name="test_scatter")
-    plot_timeseries(train_original, train_forecast, target, result.path, name="train_timeseries")
-    plot_timeseries(test_original, test_forecast, target, result.path, name="test_timeseries")
+    def target_idx(y, pred, idx):
+        return y[:, idx, None], pred[:, idx, None]
+
+    save_to = Path(result.path)
+    for idx, target in enumerate(trainable.qdata.targets):
+        plot_scatter(*target_idx(train_y, train_pred, idx), save_to / f"{target}_train_scatter.png")
+        plot_scatter(*target_idx(test_y, test_pred, idx), save_to / f"{target}_test_scatter.png")
+        plot_timeseries(*target_idx(train_y, train_pred, idx), target, save_to / f"{target}_train_timeseries.png")
+        plot_timeseries(*target_idx(test_y, test_pred, idx), target, save_to / f"{target}_test_timeseries.png")
+
+    result.metrics_dataframe[["loss", "test_loss"]].plot(legend=True).get_figure().savefig(save_to / "loss.png")

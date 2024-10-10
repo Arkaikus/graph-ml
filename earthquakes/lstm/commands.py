@@ -13,7 +13,7 @@ from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
 from data.data import EarthquakeData
 
-from lstm.ptorch.trainable import LSTMTrainable, test_result
+from lstm.trainable import LSTMTrainable, test_result
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
@@ -63,14 +63,15 @@ def load_data(file: str, env: str) -> EarthquakeData:
 @click.command(name="tune")
 @click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
 @click.option("-e", "--env", type=str, help="env")
-@click.option("-s", "--samples", type=int, help="samples", default=200)
+@click.option("-s", "--samples", type=int, help="samples", default=-1)
 # @click.option("-m", "--mode", type=str, help="pytorch/tensorflow", default="pytorch")
 def tune_command(file, env, samples):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
     qdata = load_data(file, env)
     logger.info("Processing data...")
-    metric = "loss"
+    metric = os.getenv("METRIC", "loss")
     opt_mode = "min"
+    logger.info("Tuning with metric %s mode: %s", metric, opt_mode)
     scheduler = ASHAScheduler(metric=metric, mode=opt_mode, grace_period=1, reduction_factor=2)
     trainable = tune.with_parameters(LSTMTrainable, qdata=qdata)
 
@@ -80,7 +81,7 @@ def tune_command(file, env, samples):
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
             num_samples=samples,
-            max_concurrent_trials=4,
+            max_concurrent_trials=None,
         ),
         param_space={
             "lookback": tune.randint(10, 150),
@@ -90,6 +91,7 @@ def tune_command(file, env, samples):
             "lstm_layers": tune.randint(2, 10),
             "lr": tune.loguniform(1e-4, 1e-2),
             "max_epochs": tune.randint(10, 50),
+            "loss_type": tune.choice(["mse", "mape", "mae"]),
         },
     )
     results = tuner.fit()
@@ -102,13 +104,13 @@ def tune_command(file, env, samples):
 @click.command(name="test")
 @click.option("-ex", "--experiment-path", type=str, help="experiment path", default=None)
 @click.option("-e", "--env", type=str, help="env path", default=None)
-# @click.option("-m", "--mode", type=str, help="pytorch/tensorflow", default="pytorch")
 def test_command(experiment_path, env):
     result_path = Path(experiment_path).resolve() if experiment_path else prompt_experiment()
     logger.info("Loading %s", result_path)
     analysis = ExperimentAnalysis(result_path)
     result_grid = ResultGrid(analysis)
-    result = result_grid.get_best_result("val_loss", "min")
+    metric = os.getenv("METRIC", "loss")
+    result = result_grid.get_best_result(metric, "min")
     qdata = load_data(None, env)
     test_result(result, qdata)
 
