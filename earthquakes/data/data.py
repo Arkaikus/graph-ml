@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from functools import cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import numpy as np
@@ -225,16 +226,22 @@ class EarthquakeData(Hashable):
 
         for 100 events output would be (90, 3, 10) and (90, 10)
         """
-        input_chunks = []
-        output_chunks = []
         sequences = data.shape[0] - lookback
-
-        for i in range(sequences):
-            end = i + lookback
+        input_chunks = [None] * sequences
+        output_chunks = [None] * sequences
+        from tqdm.notebook import tqdm
+        
+        def worker(i, end):
             input_chunk = data.iloc[i:end][features or self.features]
             output_chunk = data.iloc[i + 1 : end + 1][targets or self.targets]
-            input_chunks.append(input_chunk)
-            output_chunks.append(output_chunk)
+            return i, input_chunk, output_chunk
+        
+        with ThreadPoolExecutor(10) as exc:
+            futures = [exc.submit(worker, i, i + lookback) for i in range(sequences)]
+            for future in tqdm(as_completed(futures), total=sequences):
+                i, input_chunk, output_chunk = future.result()
+                input_chunks[i] = input_chunk.values
+                output_chunks[i] = output_chunk.values
 
         inputs = np.stack(input_chunks)
         outputs = np.array(output_chunks)
