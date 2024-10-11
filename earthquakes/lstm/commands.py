@@ -4,16 +4,13 @@ from pathlib import Path
 
 import click
 import pandas as pd
-from dotenv import load_dotenv
-from pathlib import Path
 import ray
+from data.data import EarthquakeData
+from dotenv import load_dotenv
+from lstm.trainable import LSTMTrainable, test_result
 from ray import tune
 from ray.tune import ExperimentAnalysis, ResultGrid
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
-
-from data.data import EarthquakeData
-
-from lstm.trainable import LSTMTrainable, test_result
 from settings import read_coordinates
 
 logger = logging.getLogger(__name__)
@@ -64,7 +61,6 @@ def load_data(file: str, env: str) -> EarthquakeData:
 @click.option("-f", "--file", type=str, help="csv earthquake catalog to be processed")
 @click.option("-e", "--env", type=str, help="env")
 @click.option("-s", "--samples", type=int, help="samples", default=-1)
-# @click.option("-m", "--mode", type=str, help="pytorch/tensorflow", default="pytorch")
 def tune_command(file, env, samples):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
     qdata = load_data(file, env)
@@ -95,7 +91,6 @@ def tune_command(file, env, samples):
         },
     )
     results = tuner.fit()
-
     logger.info("Results path at %s", results.experiment_path)
     best_result = results.get_best_result(metric, opt_mode)
     test_result(best_result, qdata)
