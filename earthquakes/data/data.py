@@ -26,22 +26,27 @@ class EarthquakeData(Hashable):
     raw_data: pd.DataFrame
     features: list
     targets: list[str]
-    zero_columns: list = field(default_factory=list)
-    time_column: bool = False
-    drop_time_column: bool = False
-    delta_time: bool = False
+    # zero_columns: list = field(default_factory=list)
+    time_column: bool = True
+    drop_time_column: bool = True
+    delta_time: bool = True
     delta_type: str = "timedelta64[s]"
     min_year: int = 1973
     min_magnitude: float = 0
-    max_magnitude: float = 6
-    min_latitude: float = None
-    min_longitude: float = None
+    max_magnitude: float = 10
     grid: Grid = None
+    network_features: list = field(default_factory=list)
+    network_lookback: int = 5
 
     def __post_init__(self):
-        assert (
-            self.min_latitude and self.min_longitude
-        ), "please provide min_latitude and min_longitude in .env or __init__"
+        if not "time" in self.raw_data.columns:
+            self.time_column = False
+            self.delta_time = False
+            self.drop_time_column = False
+
+    @classmethod
+    def from_path(cls, file_path: str, **kwargs):
+        return cls(pd.read_csv(file_path), **kwargs)
 
     @cached_property
     def data(self) -> pd.DataFrame:
@@ -100,8 +105,8 @@ class EarthquakeData(Hashable):
                 # delta_values.at[0] = pd.Timedelta(0)
                 delta_values = processed_data["time"].diff().fillna(pd.Timedelta(seconds=0))
                 processed_data["delta"] = pd.to_numeric(delta_values.astype("timedelta64[s]"))
-                if "delta" not in self.zero_columns:
-                    self.zero_columns.append("delta")
+                # if "delta" not in self.zero_columns:
+                #     self.zero_columns.append("delta")
 
             if self.drop_time_column:
                 processed_data.drop("time", axis=1, inplace=True)
@@ -119,27 +124,28 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        if mode == "minmax":
-            # Insert event with minimum values before index 0
-            min_values_row = data.min().to_frame().transpose()
-            min_values_row["latitude"] = float(self.min_latitude)
-            min_values_row["longitude"] = float(self.min_longitude)
+        # if mode == "minmax":
+        #     # Insert event with minimum values before index 0
+        #     min_values_row = data.min().to_frame().transpose()
+        #     min_values_row["latitude"] = float(self.min_latitude)
+        #     min_values_row["longitude"] = float(self.min_longitude)
 
-            for column in self.zero_columns:
-                # columns that actually real minimum value is 0
-                # this helps offseting the minmax scaler
-                # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
-                # thus minmaxscaler cannot treat 4.0 as 0.0
-                min_values_row[column] = 0
+        #     for column in self.zero_columns:
+        #         # columns that actually real minimum value is 0
+        #         # this helps offseting the minmax scaler
+        #         # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
+        #         # thus minmaxscaler cannot treat 4.0 as 0.0
+        #         min_values_row[column] = 0
 
-            data = pd.concat([min_values_row, data], ignore_index=True)
-            scaler = MinMaxScaler()
-            data[self.features] = pd.DataFrame(
-                scaler.fit_transform(data[self.features]),
-                columns=self.features,
-            )
-            return data.drop(0).reset_index(drop=True)
-        elif mode == "standard":
+        #     data = pd.concat([min_values_row, data], ignore_index=True)
+        #     scaler = MinMaxScaler()
+        #     data[self.features] = pd.DataFrame(
+        #         scaler.fit_transform(data[self.features]),
+        #         columns=self.features,
+        #     )
+        #     return data.drop(0).reset_index(drop=True)
+        # el
+        if mode == "standard":
             scaler = StandardScaler()
             data[self.features] = pd.DataFrame(
                 scaler.fit_transform(data[self.features]),
@@ -207,8 +213,8 @@ class EarthquakeData(Hashable):
             if "node" in data:
                 max_nodes = data["node"].max() + 1
                 nodes_chunk = data.iloc[i:end]["node"]
-                graph = nodes2graph(nodes_chunk.values, max_nodes, network_lookback)
-                for feature in network_features or []:
+                graph = nodes2graph(nodes_chunk.values, max_nodes, self.network_lookback or network_lookback)
+                for feature in self.network_features or network_features or []:
                     property_df = networkx_property(graph, feature)
                     input_chunk = pd.merge(
                         input_chunk,
@@ -253,14 +259,13 @@ class EarthquakeData(Hashable):
             sequences = torch.Tensor(sequences).to(torch.float32)
             targets = torch.Tensor(targets).to(torch.float32)
 
-        X_train, X_test, y_train, y_test = train_test_split(
+        return train_test_split(
             sequences,
             targets,
             test_size=test_size,
             shuffle=shuffle,
             **kwargs,
         )
-        return ((X_train, y_train), (X_test, y_test))
 
     def cut(self, df: pd.DataFrame, quantiles: int | list = 4):
         """
@@ -284,7 +289,7 @@ class EarthquakeData(Hashable):
             .astype(int)
         )
 
-    def categorical(self, quantiles: int | list = 4, **sequence_params):
+    def categorical(self, quantiles: int | list = 4):
         """
         Applies quantile cut to the data and returns the one hot encoded
         dataframe plus the nnormalized features
