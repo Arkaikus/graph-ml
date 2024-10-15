@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
-from functools import cache
+from dataclasses import dataclass, field
+from functools import cache, cached_property
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -11,77 +12,53 @@ from sklearn.model_selection import train_test_split
 
 from .grid import Grid
 from .hash import Hashable
+from .graphs import nodes2graph, networkx_property
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class EarthquakeData(Hashable):
     """
     Wrapper class to clean and normalize the csv catalog
     """
 
-    modes = {
-        "standard": StandardScaler,
-        "minmax": MinMaxScaler,
-    }
+    raw_data: pd.DataFrame
+    features: list
+    targets: list[str]
+    zero_columns: list = field(default_factory=list)
+    time_column: bool = False
+    drop_time_column: bool = False
+    delta_time: bool = False
+    delta_type: str = "timedelta64[s]"
+    min_year: int = 1973
+    min_magnitude: float = 0
+    max_magnitude: float = 6
+    min_latitude: float = None
+    min_longitude: float = None
+    grid: Grid = None
 
-    def __init__(
-        self,
-        raw_data: pd.DataFrame,
-        features: list,
-        targets: list[str],
-        time_column: bool = False,
-        drop_time_column: bool = False,
-        delta_time: bool = False,
-        delta_type: str = "timedelta64[s]",
-        min_year: int = 1973,
-        min_magnitude: float = 0,
-        max_magnitude: float = 6,
-        zero_columns: list = [],
-        min_latitude=None,
-        min_longitude=None,
-        grid: Grid = None,
-    ):
-        """
-        Parameters
-        ----------
-        features : list
-            list of the csv numeric columns to use that are numeric.
-        time_column : bool, default=False
-            whether the csv file has the date/time column available.
-        drop_time_column : bool, default=False
-            whether to drop the date/time column from the dataframe after cleaning.
-        delta_time : bool, default=False
-            if time_column is set create a new column with the time difference between events in delta_type timespan.
-        delta_type : str, default='timedelta64[s]'
-            difference in time between events in delta_time.
-        min_year : bool
-            if time_column is true filters events with year greater than min_year
-        min_magnitude : float
-            if set filters events with magnitude > min_magnitude
-        """
-        self.raw_data = raw_data
-        self.features = features
-        self.targets = targets
-        self.time_column = time_column
-        self.drop_time_column = drop_time_column
-        self.delta_time = delta_time
-        self.delta_type = delta_type
-        self.min_year = min_year
-        self.min_magnitude = min_magnitude
-        self.max_magnitude = max_magnitude
-        self.zero_columns = zero_columns
-        self.min_latitude = min_latitude
-        self.min_longitude = min_longitude
-        self.grid = grid
-        assert min_latitude and min_latitude, "please provide min_latitude and min_longitude in .env or __init__"
+    def __post_init__(self):
+        assert (
+            self.min_latitude and self.min_longitude
+        ), "please provide min_latitude and min_longitude in .env or __init__"
 
-    @property
+    @cached_property
     def data(self) -> pd.DataFrame:
-        if not hasattr(self, "_processed_data"):
-            self._processed_data = self.__process()
+        """cleans the data and tags the nodes if self.grid available"""
+        data = self.clean()
+        assert all(t in data for t in self.targets)
 
-        return self._processed_data
+        if self.grid:
+            data["node"] = self.grid.apply_node(data)
+            data = data.astype(dict(node=int))
+            self.features.append("node")
+
+        return data
+
+    @cached_property
+    def normalized_data(self) -> pd.DataFrame:
+        return self.normalize(self.data)
 
     def clean(self) -> pd.DataFrame:
         """
@@ -142,8 +119,6 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        # scaler_class = self.modes.get(mode)
-        # scaler: MinMaxScaler | StandardScaler | None = scaler_class() if scaler_class else None
         if mode == "minmax":
             # Insert event with minimum values before index 0
             min_values_row = data.min().to_frame().transpose()
@@ -159,36 +134,31 @@ class EarthquakeData(Hashable):
 
             data = pd.concat([min_values_row, data], ignore_index=True)
             scaler = MinMaxScaler()
-            data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
+            data[self.features] = pd.DataFrame(
+                scaler.fit_transform(data[self.features]),
+                columns=self.features,
+            )
             return data.drop(0).reset_index(drop=True)
         elif mode == "standard":
             scaler = StandardScaler()
-            data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
-
-            # min_value = np.min(data)
-            # data = data - min_value # Shift to positive values
+            data[self.features] = pd.DataFrame(
+                scaler.fit_transform(data[self.features]),
+                columns=self.features,
+            )
         else:
             logger.warning("No scaler class detected")
 
         return data
 
-    def __process(self):
-        """
-        Runs the cleaning and normalizaiton, against the wrapped data
-        :param grid: (Grid) instance of grid object to handle node tagging
-        :param notmalize: to run
-        """
-
-        data = self.clean()
-        assert all(t in data for t in self.targets)
-
-        if self.grid:
-            data["node"] = self.grid.apply_node(data)
-            data = data.astype(dict(node=int))
-
-        return data
-
-    def to_sequences(self, data: pd.DataFrame, lookback, features=None, targets=None):
+    def to_sequences(
+        self,
+        data: pd.DataFrame,
+        lookback,
+        features: list = None,
+        targets: list = None,
+        network_features: list = None,
+        network_lookback: int = 5,
+    ):
         """
         Processes the raw data and returns a two numpy arrays,
         one with shape (len(data) -lookback, S, F)
@@ -230,13 +200,28 @@ class EarthquakeData(Hashable):
         input_chunks = [None] * sequences
         output_chunks = [None] * sequences
         from tqdm.notebook import tqdm
-        
+
         def worker(i, end):
             input_chunk = data.iloc[i:end][features or self.features]
             output_chunk = data.iloc[i + 1 : end + 1][targets or self.targets]
+            if "node" in data:
+                max_nodes = data["node"].max() + 1
+                nodes_chunk = data.iloc[i:end]["node"]
+                graph = nodes2graph(nodes_chunk.values, max_nodes, network_lookback)
+                for feature in network_features or []:
+                    property_df = networkx_property(graph, feature)
+                    input_chunk = pd.merge(
+                        input_chunk,
+                        property_df,
+                        on="node",
+                        how="left",
+                    )
+
+                input_chunk.drop(columns=["node"], inplace=True)
+
             return i, input_chunk, output_chunk
-        
-        with ThreadPoolExecutor(10) as exc:
+
+        with ThreadPoolExecutor(8) as exc:
             futures = [exc.submit(worker, i, i + lookback) for i in range(sequences)]
             for future in tqdm(as_completed(futures), total=sequences):
                 i, input_chunk, output_chunk = future.result()
@@ -247,20 +232,23 @@ class EarthquakeData(Hashable):
         outputs = np.array(output_chunks)
         return np.transpose(inputs, (0, 2, 1)), outputs
 
-    @cache
-    def train_test_split(self, sequence_size, test_size: float, scaler="standard", torch_tensor=True, shuffle=False):
+    def split(
+        self,
+        sequences: np.ndarray,
+        targets: np.ndarray,
+        test_size: float,
+        torch_tensor=True,
+        shuffle=False,
+        **kwargs,
+    ):
         """
-        Returns the train test split after creating sequences of the normalized data
-        :params sequence_size: int, the length of the sequence by feature
-        :params test_size: float, the percentage of the test size
-        :params scaler: str, the type of scaler to use
+        Returns the train test split of sequences and targets, with the option to convert to torch tensors
+        :params sequences: ndarray, sequences of the data
+        :params targets: ndarray, target values
         :params torch_tensor: bool, whether to convert the numpy arrays to torch tensors
         :params shuffle: bool, whether to shuffle the data before splitting
             false by default, due to the nature of time series data
         """
-
-        data = self.normalize(self.data, mode=scaler)
-        sequences, targets = self.to_sequences(data, sequence_size)
         if torch_tensor:
             sequences = torch.Tensor(sequences).to(torch.float32)
             targets = torch.Tensor(targets).to(torch.float32)
@@ -270,5 +258,40 @@ class EarthquakeData(Hashable):
             targets,
             test_size=test_size,
             shuffle=shuffle,
+            **kwargs,
         )
         return ((X_train, y_train), (X_test, y_test))
+
+    def cut(self, df: pd.DataFrame, quantiles: int | list = 4):
+        """
+        Uses pandas quantile cut to bin the features
+        returns the dataframe with the binned features
+        and the list of binned features
+        """
+        for f in self.features:
+            df[f"{f}_binned"] = pd.qcut(df[f], q=quantiles, labels=False)
+
+        return df, [f"{f}_binned" for f in self.features]
+
+    def one_hot(self, df: pd.DataFrame, suffix="_binned"):
+        return (
+            pd.get_dummies(
+                df,
+                columns=[f"{f}{suffix}" for f in self.features],
+                prefix=self.features,
+            )
+            .drop(columns=self.features)
+            .astype(int)
+        )
+
+    def categorical(self, quantiles: int | list = 4, **sequence_params):
+        """
+        Applies quantile cut to the data and returns the one hot encoded
+        dataframe plus the nnormalized features
+        it also returns the binned features
+        """
+        data, bin_cols = self.cut(self.data, quantiles=quantiles)
+        one_hot = self.one_hot(data)
+        concat = pd.concat((one_hot, self.normalized_data), axis=1)
+        nobins = list(set(concat.columns) - set(bin_cols))
+        return concat[nobins], concat[bin_cols]
