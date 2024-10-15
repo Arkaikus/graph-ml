@@ -9,6 +9,7 @@ from sklearn.metrics import (
     mean_absolute_percentage_error,
     mean_squared_error,
     r2_score,
+    confusion_matrix,
 )
 
 sns.set_theme(style="darkgrid")
@@ -91,3 +92,19 @@ def plot_timeseries(original, forecast, target: str, save_to):
     logger.info("Figure saved to %s", save_to)
     fig.savefig(save_to)
     plt.close(fig)
+
+
+import seaborn as sns
+
+import matplotlib.pyplot as plt
+
+
+def plot_confusion_matrix(y_true, y_pred, save_path):
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(10, 7))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title("Confusion Matrix")
+    plt.savefig(save_path)
+    plt.close()
