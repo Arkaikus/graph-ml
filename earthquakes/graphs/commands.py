@@ -26,12 +26,12 @@ def edge_list(file, distance):
     grid = Grid(latitude, longitude, distance)
     data = EarthquakeData(
         df,
-        numeric_columns=["latitude", "longitude", "depth", "mag"],
+        features=["latitude", "longitude", "depth", "mag"],
         time_column=True,
         scaler_mode=None,
     )
     logger.info("Processing data with nodes")
-    result, _ = data.process(grid)
+    result, _ = data.__process(grid)
     nodes = result["node"].values
 
     logger.info("Saving edges list to csv")

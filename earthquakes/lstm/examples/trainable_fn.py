@@ -23,7 +23,7 @@ sns.set_theme(style="darkgrid")
 
 from data.data import EarthquakeData
 
-from .model import LSTMModel
+from ..model import LSTMModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ def train_fn(config: dict, qdata: EarthquakeData):
 
     # prepare train test split of data
     logging.info("Creating sequences with size %s, test_size %s, batch_size %s", sequence_size, test_size, batch_size)
-    x_train, x_test, y_train, y_test = qdata.train_test_split(sequence_size, test_size)
+    x_train, x_test, y_train, y_test = qdata.split(sequence_size, test_size)
     x_train = torch.Tensor(x_train).to(torch.float32)
     x_test = torch.Tensor(x_test).to(torch.float32)
     y_train = torch.Tensor(y_train).to(torch.float32)
@@ -127,7 +127,7 @@ def test_fn(config: dict, qdata: EarthquakeData, checkpoint: Checkpoint):
     batch_size = config["batch_size"]
     learning_rate = config["lr"]
 
-    _, x_test, _, y_test = qdata.train_test_split(sequence_size, test_size, test=True)
+    _, x_test, _, y_test = qdata.split(sequence_size, test_size, test=True)
     x_test = torch.Tensor(x_test).to(torch.float32)
     y_test = torch.Tensor(y_test).to(torch.float32)
     test_dataset = TensorDataset(x_test, y_test)

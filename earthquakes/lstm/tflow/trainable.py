@@ -46,7 +46,7 @@ class LSTMTrainable(tune.Trainable):
             (self.x_train, self.y_train),
             (self.x_val, self.y_val),
             (self.x_test, self.y_test),
-        ) = qdata.train_test_split(sequence_size, test_size, scaler, torch_tensor=False)
+        ) = qdata.split(sequence_size, test_size, scaler, torch_tensor=False)
 
         self.train_data = tf.data.Dataset.from_tensor_slices((self.x_train, self.y_train)).batch(batch_size)
         self.val_data = tf.data.Dataset.from_tensor_slices((self.x_val, self.y_val)).batch(batch_size)

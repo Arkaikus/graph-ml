@@ -49,7 +49,7 @@ class LSTMTrainable(tune.Trainable):
             # shapes: ((1-test_size)*N, F, Lookback), (test_size*N, Lookback, 1)
             (self.x_train, self.y_train),
             (self.x_test, self.y_test),
-        ) = self.qdata.train_test_split(lookback, test_size, "standard")
+        ) = self.qdata.split(lookback, test_size, "standard")
 
         self.train_dataset = TensorDataset(self.x_train, self.y_train)
         self.test_dataset = TensorDataset(self.x_test, self.y_test)

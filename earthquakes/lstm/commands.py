@@ -7,7 +7,7 @@ import pandas as pd
 import ray
 from data.data import EarthquakeData
 from dotenv import load_dotenv
-from lstm.trainable import LSTMTrainable, test_result
+from lstm.regression import LSTMTrainable, test_result
 from ray import tune
 from ray.tune import ExperimentAnalysis, ResultGrid
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
