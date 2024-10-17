@@ -59,10 +59,10 @@ class RegressionTrainable(tune.Trainable):
         self.best_loss = np.inf
         self.done = False
 
-    def stop(self, loss):
+    def is_done(self, epoch_loss):
         """Handles early stopping"""
-        if loss < self.best_loss:
-            self.best_loss = loss
+        if epoch_loss < self.best_loss:
+            self.best_loss = epoch_loss
             self.patience = min(self.patience + 1, 10)
         elif not self.done:
             self.patience -= 1
@@ -111,7 +111,7 @@ class RegressionTrainable(tune.Trainable):
 
         mean_test_loss = test_loss / total_samples
 
-        self.done = self.stop(epoch_loss)
+        self.done = self.is_done(epoch_loss)
         metrics = {
             "loss": epoch_loss,
             "mean_loss": mean_loss,
