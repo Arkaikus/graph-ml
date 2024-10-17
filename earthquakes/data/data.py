@@ -211,7 +211,7 @@ class EarthquakeData(Hashable):
             input_chunk = data.iloc[i:end][features or self.features]
             output_chunk = data.iloc[i + 1 : end + 1][targets or self.targets]
             if "node" in data:
-                max_nodes = data["node"].max() + 1
+                max_nodes = int(data["node"].max() + 1)
                 nodes_chunk = data.iloc[i:end]["node"]
                 graph = nodes2graph(nodes_chunk.values, max_nodes, self.network_lookback or network_lookback)
                 for feature in self.network_features or network_features or []:
