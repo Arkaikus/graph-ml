@@ -57,7 +57,6 @@ class EarthquakeData(Hashable):
         if self.grid:
             data["node"] = self.grid.apply_node(data)
             data = data.astype(dict(node=int))
-            self.features.append("node")
 
         return data
 
@@ -124,27 +123,6 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
-        # if mode == "minmax":
-        #     # Insert event with minimum values before index 0
-        #     min_values_row = data.min().to_frame().transpose()
-        #     min_values_row["latitude"] = float(self.min_latitude)
-        #     min_values_row["longitude"] = float(self.min_longitude)
-
-        #     for column in self.zero_columns:
-        #         # columns that actually real minimum value is 0
-        #         # this helps offseting the minmax scaler
-        #         # example: if magnitude is between 4.0 and 7.0, 4.0 isn't the real minimum
-        #         # thus minmaxscaler cannot treat 4.0 as 0.0
-        #         min_values_row[column] = 0
-
-        #     data = pd.concat([min_values_row, data], ignore_index=True)
-        #     scaler = MinMaxScaler()
-        #     data[self.features] = pd.DataFrame(
-        #         scaler.fit_transform(data[self.features]),
-        #         columns=self.features,
-        #     )
-        #     return data.drop(0).reset_index(drop=True)
-        # el
         if mode == "standard":
             scaler = StandardScaler()
             data[self.features] = pd.DataFrame(
@@ -164,6 +142,7 @@ class EarthquakeData(Hashable):
         targets: list = None,
         network_features: list = None,
         network_lookback: int = 5,
+        notebook=False,
     ):
         """
         Processes the raw data and returns a two numpy arrays,
@@ -205,27 +184,35 @@ class EarthquakeData(Hashable):
         sequences = data.shape[0] - lookback
         input_chunks = [None] * sequences
         output_chunks = [None] * sequences
-        from tqdm.notebook import tqdm
 
-        def worker(i, end):
-            input_chunk = data.iloc[i:end][features or self.features]
-            output_chunk = data.iloc[i + 1 : end + 1][targets or self.targets]
-            if "node" in data:
+        if notebook:
+            from tqdm.notebook import tqdm
+        else:
+            from tqdm import tqdm
+
+        def worker(start, end):
+            _features = features or self.features
+            output_chunk = data.iloc[start + 1 : end + 1][targets or self.targets]
+            nx_features = network_features or self.network_features
+            nx_lookback = network_lookback or self.network_lookback
+            if "node" in data and nx_features:
                 max_nodes = int(data["node"].max() + 1)
-                nodes_chunk = data.iloc[i:end]["node"]
-                graph = nodes2graph(nodes_chunk.values, max_nodes, self.network_lookback or network_lookback)
-                for feature in self.network_features or network_features or []:
+                input_chunk = data.iloc[start:end][_features + ["node"]]
+                graph = nodes2graph(input_chunk["node"].values, max_nodes, nx_lookback)
+                for feature in nx_features or []:
                     property_df = networkx_property(graph, feature)
                     input_chunk = pd.merge(
-                        input_chunk,
+                        input_chunk.copy(),
                         property_df,
                         on="node",
                         how="left",
                     )
 
                 input_chunk.drop(columns=["node"], inplace=True)
+            else:
+                input_chunk = data.iloc[start:end][_features]
 
-            return i, input_chunk, output_chunk
+            return start, input_chunk, output_chunk
 
         with ThreadPoolExecutor(8) as exc:
             futures = [exc.submit(worker, i, i + lookback) for i in range(sequences)]

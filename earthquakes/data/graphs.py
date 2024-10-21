@@ -52,11 +52,10 @@ def networkx_property(graph: nx.Graph, property: str) -> pd.DataFrame:
     - betweenness_centrality
     - closeness_centrality
     - pagerank
-    
+
     returns a dataframe with node index and property value per node
     """
     assert isinstance(graph, nx.Graph)
-    assert min(graph.nodes) == 0, "Graph node must start at 0"
     if property not in properties:
         return None
 
@@ -74,5 +73,5 @@ def networkx_property(graph: nx.Graph, property: str) -> pd.DataFrame:
 
     df = pd.DataFrame(pd.Series(prop), columns=[property])
     df.index.names = ["node"]
-    df.index += 1
+    # df.index += 1
     return df.reset_index()
