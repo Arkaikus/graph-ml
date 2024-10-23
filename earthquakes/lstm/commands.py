@@ -13,7 +13,6 @@ from data.data import EarthquakeData
 from data.usgs import USGS
 from data.grid import Grid
 from lstm import utils
-from lstm.regression import RegressionTrainable, test_result
 
 logger = logging.getLogger(__name__)
 
@@ -33,34 +32,26 @@ logger = logging.getLogger(__name__)
 @click.option("--max-long", type=float, help="max longitude", default=-72.466)
 @click.option("--min-mag", type=float, help="min magnitude", default=0)
 @click.option("--max-mag", type=float, help="max magnitude", default=10)
-@click.option("--node-size", type=int, help="size of node in kms", default=100)
 @click.option("--metric", type=str, help="metric", default="loss")
 @click.option("--mode", type=str, help="mode", default="min")
 @click.option("--networkx", type=bool, help="mode", default=False)
-@click.option(
-    "--nx-features",
-    multiple=True,
-    help="features to be used in the model",
-    default=["degree_centrality", "clustering", "betweenness_centrality", "closeness_centrality", "pagerank"],
-    callback=lambda ctx, param, value: list(value),
-)
-@click.option("--nx-lookback", type=int, help="mode", default=5)
+@click.option("--node-size", type=int, help="size of node in kms", default=100)
+@click.option("--classify", type=bool, help="whether to regress or classify data", default=False)
 @click.option("-s", "--samples", type=int, help="samples", default=-1)
-def tune_regression(
-    features,
-    target,
-    min_lat,
-    max_lat,
-    min_long,
-    max_long,
-    min_mag,
-    max_mag,
-    node_size,
-    metric,
-    mode,
-    networkx,
-    nx_features,
-    nx_lookback,
+def tune_command(
+    features: list,
+    target: str,
+    min_lat: float,
+    max_lat: float,
+    min_long: float,
+    max_long: float,
+    min_mag: float,
+    max_mag: float,
+    metric: str,
+    mode: str,
+    networkx: bool,
+    node_size: int,
+    classify: bool,
     samples,
 ):
     """Reads a processed .csv catalog and trains an LSTM neural network"""
@@ -69,11 +60,21 @@ def tune_regression(
     longitude = (min_long, max_long)
     raw_data = USGS(latitude, longitude).download()
     kwargs = {}
+    param_space = {}
     if networkx:
         grid = Grid(latitude, longitude, node_size)
         kwargs["grid"] = grid
-        kwargs["network_features"] = nx_features
-        kwargs["network_lookback"] = nx_lookback
+        nx_features = ["degree_centrality", "clustering", "betweenness_centrality", "closeness_centrality", "pagerank"]
+        param_space["network_features"] = tune.choice(nx_features)
+        param_space["network_lookback"] = tune.randint(1, 10)
+        param_space["node_size"] = node_size
+
+    if classify:
+        from .classification import ClassificationTrainable as Trainable
+
+        param_space["quantiles"] = tune.randint(2, 6)
+    else:
+        from .regression import RegressionTrainable as Trainable
 
     qdata = EarthquakeData(raw_data, features, [target], min_magnitude=min_mag, max_magnitude=max_mag, **kwargs)
 
@@ -82,7 +83,7 @@ def tune_regression(
 
     logger.info("Tuning with metric %s mode: %s", metric, mode)
     scheduler = ASHAScheduler(metric=metric, mode=mode, grace_period=1, reduction_factor=2)
-    trainable = tune.with_parameters(RegressionTrainable, qdata=qdata)
+    trainable = tune.with_parameters(Trainable, qdata=qdata)
 
     ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
     tuner = tune.Tuner(
@@ -97,12 +98,15 @@ def tune_regression(
             "lr": tune.loguniform(1e-4, 1e-2),
             "max_epochs": tune.randint(10, 70),
             "loss_type": tune.choice(["mse", "mape", "mae"]),
+            **param_space,
         },
     )
     results = tuner.fit()
     logger.info("Results path at %s", results.experiment_path)
     best_result = results.get_best_result(metric, mode)
-    test_result(best_result, qdata, metric, mode)
+    trainable_cls = tune.with_parameters(Trainable, qdata=qdata)
+    trainable = trainable_cls(config=best_result.config)
+    trainable.test_result(best_result, metric, mode)
     # pickle qdata
     with open(Path(results.experiment_path) / "qdata.pkl", "wb") as f:
         pickle.dump(qdata, f)
@@ -112,7 +116,8 @@ def tune_regression(
 @click.option("-ex", "--experiment-path", type=str, help="experiment path", default=None)
 @click.option("--metric", type=str, help="metric", default="loss")
 @click.option("--mode", type=str, help="mode", default="min")
-def test_command(experiment_path, metric, mode):
+@click.option("--classify", type=bool, help="whether to regress or classify data", default=False)
+def test_command(experiment_path, metric, mode, classify):
     result_path = Path(experiment_path).resolve() if experiment_path else utils.prompt_experiment()
 
     logger.info("Loading qdata...")
@@ -123,9 +128,16 @@ def test_command(experiment_path, metric, mode):
     analysis = ExperimentAnalysis(result_path)
     result_grid = ResultGrid(analysis)
     result = result_grid.get_best_result(metric, mode)
-    test_result(result, qdata, metric, mode)
+    if classify:
+        from .classification import ClassificationTrainable as Trainable
+    else:
+        from .regression import RegressionTrainable as Trainable
+
+    trainable_cls = tune.with_parameters(Trainable, qdata=qdata)
+    trainable = trainable_cls(config=result.config)
+    trainable.test_result(result, metric, mode)
 
 
 lstm_group = click.Group("lstm", help="tools to train and tune lstm models")
-lstm_group.add_command(tune_regression)
+lstm_group.add_command(tune_command)
 lstm_group.add_command(test_command)
