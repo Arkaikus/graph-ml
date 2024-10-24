@@ -97,7 +97,7 @@ def tune_command(
             "lstm_layers": tune.randint(2, 10),
             "lr": tune.loguniform(1e-4, 1e-2),
             "max_epochs": tune.randint(10, 70),
-            "loss_type": tune.choice(["mse", "mape", "mae"]),
+            "loss_type": tune.choice(["mse", "mape", "mae"] if not classify else ["cross_entropy"]),
             **param_space,
         },
     )

@@ -54,8 +54,8 @@ class BaseTrainable(tune.Trainable):
 
     def setup_loaders(self):
         self.x_train, self.x_test, self.y_train, self.y_test = self.setup_data()
-        self.train_dataset = TensorDataset(self.x_train, self.y_train)
-        self.test_dataset = TensorDataset(self.x_test, self.y_test)
+        self.train_dataset = TensorDataset(self.x_train, self.y_train[:, -1])
+        self.test_dataset = TensorDataset(self.x_test, self.y_test[:, -1])
         self.train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=self.shuffle)
         self.test_loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=self.shuffle)
 
@@ -88,11 +88,12 @@ class BaseTrainable(tune.Trainable):
         return self.epoch >= self.max_epochs - 1
 
     def train_batch(self, input_batch, output_batch):
+        """takes input and output batches and returns the loss"""
         self.optimizer.zero_grad()
 
         # forward pass
         output = self.model(input_batch.to(self.device))
-        loss = self.criterion(output, output_batch[:, -1].to(self.device))
+        loss = self.criterion(output, output_batch.to(self.device))
 
         # backward pass and optimize
         loss.backward()
@@ -101,19 +102,18 @@ class BaseTrainable(tune.Trainable):
         return loss.item()
 
     def test_batch(self, input_batch, output_batch):
-        input_batch, output_batch = input_batch.to(self.device), output_batch[:, -1].to(self.device)
+        input_batch, output_batch = input_batch.to(self.device), output_batch.to(self.device)
         output = self.model(input_batch)
         loss = self.criterion(output, output_batch)
         return loss.item()
 
-    def eval(self):
-        # Assuming test_loader is defined with your test dataset
+    def eval(self, loader: DataLoader):
         self.model.eval()
         test_loss = 0
         total_samples = 0
 
         with torch.no_grad():
-            for input_batch, output_batch in self.test_loader:
+            for input_batch, output_batch in loader:
                 loss = self.test_batch(input_batch, output_batch)
                 test_loss += loss * input_batch.size(0)  # Accumulate loss
                 total_samples += input_batch.size(0)
@@ -135,7 +135,7 @@ class BaseTrainable(tune.Trainable):
 
         mean_loss = epoch_loss / len(self.train_loader)
 
-        eval_metrics = self.eval()
+        eval_metrics = self.eval(self.test_loader)
         self.done = self.is_done(epoch_loss)
         metrics = {
             "loss": epoch_loss,

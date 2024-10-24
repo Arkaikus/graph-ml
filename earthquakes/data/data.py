@@ -184,6 +184,13 @@ class EarthquakeData(Hashable):
         sequences = data.shape[0] - lookback
         input_chunks = [None] * sequences
         output_chunks = [None] * sequences
+        _features = features or self.features
+        if "node" in data:
+            if "node" not in _features:
+                _features = _features + ["node"]
+            max_nodes = int(data["node"].max() + 1)
+            nx_features = network_features or self.network_features
+            nx_lookback = network_lookback or self.network_lookback
 
         if notebook:
             from tqdm.notebook import tqdm
@@ -191,13 +198,9 @@ class EarthquakeData(Hashable):
             from tqdm import tqdm
 
         def worker(start, end):
-            _features = features or self.features
             output_chunk = data.iloc[start + 1 : end + 1][targets or self.targets]
-            nx_features = network_features or self.network_features
-            nx_lookback = network_lookback or self.network_lookback
             if "node" in data and nx_features:
-                max_nodes = int(data["node"].max() + 1)
-                input_chunk = data.iloc[start:end][_features + ["node"]]
+                input_chunk = data.iloc[start:end][_features]
                 graph = nodes2graph(input_chunk["node"].values, max_nodes, nx_lookback)
                 for feature in nx_features or []:
                     property_df = networkx_property(graph, feature)
@@ -284,6 +287,6 @@ class EarthquakeData(Hashable):
         """
         data, bin_cols = self.cut(self.data, quantiles=quantiles)
         one_hot = self.one_hot(data)
-        concat = pd.concat((one_hot, self.normalized_data), axis=1)
+        concat = pd.concat((one_hot, self.normalized_data.drop(columns=["node"], errors="ignore")), axis=1)
         nobins = list(set(concat.columns) - set(bin_cols))
         return concat[nobins], concat[bin_cols]

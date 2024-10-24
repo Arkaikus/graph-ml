@@ -18,13 +18,10 @@ class RegressionTrainable(BaseTrainable):
         with torch.no_grad():
             train_output = [self.model(x.to(self.device)) for x, _ in self.train_loader]
             test_output = [self.model(x.to(self.device)) for x, _ in self.test_loader]
-            train_output = torch.cat(train_output, dim=0)
-            test_output = torch.cat(test_output, dim=0)
+            train_output = torch.cat(train_output, dim=0).detach().cpu().numpy()
+            test_output = torch.cat(test_output, dim=0).detach().cpu().numpy()
 
-        return (
-            (self.y_train[:, -1].numpy(), train_output.detach().cpu().numpy()),
-            (self.y_test[:, -1].numpy(), test_output.detach().cpu().numpy()),
-        )
+        return self.y_train[:, -1].numpy(), train_output, self.y_test[:, -1].numpy(), test_output
 
     def test_result(self, result: Result, metric, mode):
         logger.info("Loading testing from config")
@@ -34,7 +31,7 @@ class RegressionTrainable(BaseTrainable):
         print(result.path)
         print(result.metrics_dataframe)
 
-        ((train_y, train_pred), (test_y, test_pred)) = self.forecast()
+        train_y, train_pred, test_y, test_pred = self.forecast()
 
         def target_idx(y, pred, idx):
             return y[:, idx, None], pred[:, idx, None]
