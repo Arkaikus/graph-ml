@@ -4,13 +4,12 @@ from pathlib import Path
 import networkx as nx
 import numpy as np
 import pandas as pd
+from data.store import Store
 from gensim.models import Word2Vec
 from node2vec import Node2Vec
 from node2vec.edges import HadamardEmbedder
 from sklearn import metrics
 from sklearn.ensemble import RandomForestClassifier
-
-from data.store import Store
 
 from .edge_splitter import EdgeSplitter
 
@@ -49,6 +48,7 @@ def run_link_prediction(file: str, test_size, embedder_class=HadamardEmbedder, *
 
     Note: EdgeSplitter.train_test_split returns the reduced graph, %p sampled nodes and %p sampled labels
     """
+    logger.info("Link prediction with RandomForestClassifier")
     file_path = Path(file)
     assert file_path.exists()
     edge_list = pd.read_csv(file_path, dtype=str)
