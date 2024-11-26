@@ -4,10 +4,10 @@ from pathlib import Path
 
 import torch
 from data.data import EarthquakeData
-from ray import tune
-from ray.air import Result
 from lstm.base import BaseTrainable
 from lstm.plot import plot_scatter, plot_timeseries
+from ray import tune
+from ray.air import Result
 
 logger = logging.getLogger(__name__)
 

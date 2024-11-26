@@ -6,13 +6,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from data.data import EarthquakeData
+from lstm.models.lstm_model import LSTMModel
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from torch.utils.data import DataLoader, TensorDataset
 from torchmetrics.regression import MeanAbsolutePercentageError
-
-from lstm.model import LSTMModel
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +87,7 @@ class BaseTrainable(tune.Trainable):
         return self.epoch >= self.max_epochs - 1
 
     def train_batch(self, input_batch, output_batch):
-        """takes input and output batches and returns the loss"""
+        """takes input and output batches and returns the output and loss"""
         self.optimizer.zero_grad()
 
         # forward pass
@@ -99,13 +98,27 @@ class BaseTrainable(tune.Trainable):
         loss.backward()
         self.optimizer.step()
 
-        return loss.item()
+        return output, loss.item()
+
+    def train_epoch(self):
+        """goes through all batches once, returns the loss in a metric dictionary"""
+        self.model.train()
+        epoch_loss = 0
+        for input_batch, output_batch in self.train_loader:
+            _, batch_loss = self.train_batch(input_batch, output_batch)
+            epoch_loss += batch_loss
+
+        mean_loss = epoch_loss / len(self.train_loader)
+        return {
+            "loss": epoch_loss,
+            "mean_loss": mean_loss,
+        }
 
     def test_batch(self, input_batch, output_batch):
         input_batch, output_batch = input_batch.to(self.device), output_batch.to(self.device)
         output = self.model(input_batch)
         loss = self.criterion(output, output_batch)
-        return loss.item()
+        return output, loss.item()
 
     def eval(self, loader: DataLoader):
         self.model.eval()
@@ -114,7 +127,7 @@ class BaseTrainable(tune.Trainable):
 
         with torch.no_grad():
             for input_batch, output_batch in loader:
-                loss = self.test_batch(input_batch, output_batch)
+                _, loss = self.test_batch(input_batch, output_batch)
                 test_loss += loss * input_batch.size(0)  # Accumulate loss
                 total_samples += input_batch.size(0)
 
@@ -127,25 +140,17 @@ class BaseTrainable(tune.Trainable):
     def step(self):
         self.epoch += 1
         # Training phase
-        self.model.train()
-        epoch_loss = 0
-        for input_batch, output_batch in self.train_loader:
-            batch_loss = self.train_batch(input_batch, output_batch)
-            epoch_loss += batch_loss
-
-        mean_loss = epoch_loss / len(self.train_loader)
-
+        epoch_metrics = self.train_epoch()
         eval_metrics = self.eval(self.test_loader)
-        self.done = self.is_done(epoch_loss)
+        self.done = self.is_done(epoch_metrics["mean_loss"])
         metrics = {
-            "loss": epoch_loss,
-            "mean_loss": mean_loss,
             "checkpoint_dir_name": "",
             "patience": self.patience,
             "done": self.done,
+            **epoch_metrics,
             **eval_metrics,
         }
-        logger.info("Metrics: %s", metrics)
+        logger.info("epoch metrics: %s eval_metrics: %s", epoch_metrics, eval_metrics)
         return metrics
 
     def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:

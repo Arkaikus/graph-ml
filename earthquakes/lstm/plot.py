@@ -1,16 +1,21 @@
 import logging
+from itertools import cycle
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import (
+    confusion_matrix,
     mean_absolute_error,
     mean_absolute_percentage_error,
     mean_squared_error,
     r2_score,
-    confusion_matrix,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
 )
+from sklearn.preprocessing import label_binarize
 
 sns.set_theme(style="darkgrid")
 
@@ -94,11 +99,6 @@ def plot_timeseries(original, forecast, target: str, save_to):
     plt.close(fig)
 
 
-import seaborn as sns
-
-import matplotlib.pyplot as plt
-
-
 def plot_confusion_matrix(y_true, y_pred, save_path):
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(10, 7))
@@ -108,3 +108,38 @@ def plot_confusion_matrix(y_true, y_pred, save_path):
     plt.title("Confusion Matrix")
     plt.savefig(save_path)
     plt.close()
+
+
+def plot_roc_auc(all_labels, all_preds, quantiles, save_to):
+    try:
+        labels = list(range(quantiles))
+        if quantiles == 2:
+            all_labels_bin = np.vstack((all_labels == 0, all_labels == 1), dtype=int).T
+            all_preds_bin = np.vstack((all_preds == 0, all_preds == 1), dtype=int).T
+        else:
+            all_labels_bin = label_binarize(all_labels, classes=labels)
+            all_preds_bin = label_binarize(all_preds, classes=labels)
+
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+        for i in range(quantiles):
+            fpr[i], tpr[i], _ = roc_curve(all_labels_bin[:, i], all_preds_bin[:, i])
+            roc_auc[i] = roc_auc_score(all_labels_bin[:, i], all_preds_bin[:, i])
+
+        # Plot ROC curve for each class
+        plt.figure(figsize=(8, 6))
+        colors = cycle(["blue", "red", "green"])
+        for i, color in zip(range(quantiles), colors):
+            plt.plot(fpr[i], tpr[i], color=color, lw=2, label=f"Class {i} (area = {roc_auc[i]:0.2f})")
+
+        plt.plot([0, 1], [0, 1], "k--", lw=2)  # Diagonal line
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.title(f"ROC AUC Curve for {quantiles} classes")
+        plt.legend(loc="lower right")
+        plt.gcf().savefig(save_to)
+    except:
+        logger.exception("Error plotting ROC AUC curve")
