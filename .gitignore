@@ -1,4 +1,8 @@
+*.ipynb
 *.pth
+*.png
+*.puml
+creds.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
