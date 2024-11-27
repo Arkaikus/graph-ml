@@ -1,6 +1,5 @@
 import logging
 import os
-import pdb
 import tempfile
 from pathlib import Path
 
@@ -23,7 +22,7 @@ sns.set_theme(style="darkgrid")
 
 from data.data import EarthquakeData
 
-from ..model import LSTMModel
+from ..models.lstm_model import LSTMModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
