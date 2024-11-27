@@ -1,5 +1,7 @@
 click
 geopy
+geopandas
+geoplot
 node2vec
 matplotlib
 pandas
@@ -8,3 +10,4 @@ pyyaml
 scikit-learn
 scipy==1.10.1
 ray[tune]
+torchmetrics
