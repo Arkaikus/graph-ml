@@ -168,7 +168,6 @@ def tune_command(
             resume_errored=True,  # Resume errored trials
             param_space=param_space,
         )
-        results = tuner.fit()
     else:
 
         tuner = tune.Tuner(
@@ -181,7 +180,8 @@ def tune_command(
             run_config=RunConfig(),
             param_space=param_space,
         )
-        results = tuner.fit()
+
+    results = tuner.fit()
     logger.info("Results path at %s", results.experiment_path)
     best_result = results.get_best_result(metric, mode)
     trainable_cls = tune.with_parameters(Trainable, qdata=qdata)

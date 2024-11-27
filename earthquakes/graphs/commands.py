@@ -14,6 +14,22 @@ from .link_prediction_tune import tune_link_prediction
 logger = logging.getLogger(__name__)
 
 
+def prompt_experiment():
+    ray_results = Path.home() / "ray_results"
+    folders = {
+        idx: folder
+        for idx, folder in enumerate(
+            ray_results.glob("*"),
+        )
+        if folder.is_dir()
+        if folder.stem[0].isalpha()
+    }
+    prompt = "\n".join(f"{idx}) {folder.stem}" for idx, folder in folders.items())
+    choice = click.prompt(prompt, type=int, default=None)
+    assert choice is not None, choice
+    return folders.get(choice)
+
+
 @click.command()
 @click.option("-f", "--file", type=str, help="Catalog csv file to turn into edge list")
 @click.option("-d", "--distance", type=float, help="Distance in km for the grid cell size", default=100)
@@ -85,13 +101,15 @@ def link_prediction(file, neural_network):
 @click.command()
 @click.option("-f", "--file", type=str, help="Csv containing a list of graph edges")
 @click.option("-s", "--samples", type=int, help="samples", default=-1)
-def link_prediction_tune(file, samples):
+@click.option("-resume", "--resume", type=bool, help="resume experiment", default=False)
+@click.option("-ex", "--experiment", type=str, help="resume experiment path", default=None)
+def link_prediction_tune(file, samples, resume, experiment):
     """
     Takes an edge_list generated .csv file and runs the Stamille's Graph Machine Learning Book, Link prediciton algorithm
 
     ## Usage
 
-    quakes graphs link-prediction-tune -f csv/edges_10_95fb6d07e15e056a498ec10f366fbe4c.csv -s 10
+    quakes graphs link-prediction-tune -f csv/edges_30_95fb6d07e15e056a498ec10f366fbe4c.csv -s 10
     quakes graphs link-prediction-tune -f csv/edges_50_95fb6d07e15e056a498ec10f366fbe4c.csv -s 10
     quakes graphs link-prediction-tune -f csv/edges_100_95fb6d07e15e056a498ec10f366fbe4c.csv -s 10
 
@@ -99,7 +117,12 @@ def link_prediction_tune(file, samples):
 
     for 10km grid distance
     """
-    roc, acc, recall, f1 = tune_link_prediction(file, test_size=0.3, samples=samples)
+    experiment_path = experiment
+    if resume and not experiment_path:
+        experiment_path = prompt_experiment()
+
+    experiment_path = Path(experiment_path) if isinstance(experiment_path, str) else experiment_path
+    roc, acc, recall, f1 = tune_link_prediction(file, test_size=0.3, samples=samples, experiment_path=experiment_path)
     print("ROC AUC score", roc)
     print("Precission", acc)
     print("Recall", recall)

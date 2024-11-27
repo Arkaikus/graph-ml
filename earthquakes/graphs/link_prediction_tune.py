@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -37,7 +38,7 @@ def train_embedding(graph, name, **n2v_kwargs) -> Word2Vec:
     return data
 
 
-class TrainSimpleNN(Trainable):
+class GNNTrainable(Trainable):
     def setup(self, config):
         input_dim = config["input_dim"]
         hidden_dim1 = config["hidden_dim1"]
@@ -47,10 +48,12 @@ class TrainSimpleNN(Trainable):
         self.optimizer = optim.Adam(self.model.parameters(), lr=config["learning_rate"])
 
         dataset = TensorDataset(
-            torch.tensor(config["embeddings"], dtype=torch.float32),
-            torch.tensor(config["labels"], dtype=torch.float32),
+            torch.tensor(config["train_embeddings"], dtype=torch.float32),
+            torch.tensor(config["train_labels"], dtype=torch.float32),
         )
         self.dataloader = DataLoader(dataset, batch_size=config["batch_size"], shuffle=True)
+        self.test_embeddings = torch.tensor(self.config["test_embeddings"], dtype=torch.float32)
+        self.test_labels = torch.tensor(self.config["test_labels"], dtype=torch.float32)
 
     def step(self):
         self.model.train()
@@ -70,8 +73,21 @@ class TrainSimpleNN(Trainable):
             correct_predictions += (predicted == batch_labels).sum().item()
             total_predictions += batch_labels.size(0)
 
-        accuracy = correct_predictions / total_predictions
-        return {"loss": total_loss / len(self.dataloader), "accuracy": accuracy}
+        train_accuracy = correct_predictions / total_predictions
+
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model(self.test_embeddings).squeeze()
+            predicted = (outputs > 0.5).float()
+            correct_predictions = (predicted == self.test_labels).sum().item()
+            total_predictions = self.test_labels.size(0)
+            test_accuracy = correct_predictions / total_predictions
+
+        return {
+            "loss": total_loss / len(self.dataloader),
+            "train_accuracy": train_accuracy,
+            "accuracy": test_accuracy,
+        }
 
     def save_checkpoint(self, checkpoint_dir):
         checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint.pth")
@@ -87,48 +103,90 @@ class TrainSimpleNN(Trainable):
             self.optimizer.load_state_dict(optimizer_state)
 
 
-def tune_neural_network(embeddings, labels, samples, epochs=20, save_to="tuning_results.csv"):
+def tune_neural_network(
+    embeddings: tuple, labels: tuple, samples, epochs=20, experiment_path=None, save_to="tuning_results.csv"
+):
     """trains and returns the best neural network model using hyperparameter tuning"""
-    input_dim = embeddings.shape[1]
+    train_vectors, test_vectors = embeddings
+    train_labels, test_labels = labels
+    input_dim = train_vectors.shape[1]
     config = {
         "input_dim": input_dim,
         "hidden_dim1": tune.choice([64, 128, 256]),
         "hidden_dim2": tune.choice([32, 64, 128]),
         "learning_rate": tune.loguniform(1e-4, 1e-2),
         "batch_size": tune.choice([16, 32, 64]),
-        "embeddings": embeddings,
-        "labels": labels,
+        "train_embeddings": train_vectors,
+        "test_embeddings": test_vectors,
+        "train_labels": train_labels,
+        "test_labels": test_labels,
     }
 
     scheduler = ASHAScheduler(metric="loss", mode="min", max_t=epochs, grace_period=1, reduction_factor=2)
+    trainable = tune.with_resources(GNNTrainable, resources={"cpu": 8, "gpu": 1})
+    if experiment_path:
+        tuner = tune.Tuner.restore(
+            path=experiment_path.absolute().as_posix(),
+            trainable=trainable,  # Replace with your actual trainable class
+            resume_unfinished=True,  # Continue unfinished trials
+            resume_errored=True,  # Resume errored trials
+            param_space=config,
+        )
+    else:
+        tuner = tune.Tuner(
+            trainable,
+            param_space=config,
+            tune_config=tune.TuneConfig(
+                scheduler=scheduler,
+                num_samples=samples,
+                max_concurrent_trials=None,
+            ),
+        )
 
-    tuner = tune.Tuner(
-        tune.with_resources(TrainSimpleNN, resources={"cpu": 8, "gpu": 1}),
-        param_space=config,
-        tune_config=tune.TuneConfig(
-            scheduler=scheduler,
-            num_samples=samples,
-            max_concurrent_trials=None,
-        ),
-    )
     analysis = tuner.fit()
-
-    result = analysis.get_best_result("loss", "min")
-    trainable = TrainSimpleNN(result.config)
-    best_checkpoint = result.get_best_checkpoint("loss", "min")
+    result = analysis.get_best_result("accuracy", "max")
+    trainable = GNNTrainable(result.config)
+    best_checkpoint = result.get_best_checkpoint("accuracy", "max")
     trainable.load_checkpoint(best_checkpoint)
 
     result_df = analysis.get_dataframe()
     drop_columns = [c for c in result_df.columns if c.lower().endswith(("embeddings", "labels"))]
+    drop_columns.extend(
+        [
+            "done",
+            "training_iteration",
+            "trial_id",
+            "date",
+            "timestamp",
+            "time_this_iter_s",
+            "time_total_s",
+            "pid",
+            "hostname",
+            "node_ip",
+            "time_since_restore",
+            "iterations_since_restore",
+            "logdir",
+        ]
+    )
 
-    result_df = analysis.get_dataframe().drop(columns=drop_columns)
+    result_df = analysis.get_dataframe().drop(columns=drop_columns).sort_values(by="accuracy", ascending=False)
+    result_df.columns = [
+        c.replace("_", " ").replace("Config/", "").replace("config/", "").title() for c in result_df.columns
+    ]
     result_df.to_csv(save_to, index=False)
     result_df.to_latex(str(save_to).replace(".csv", ".tex"), index=False)
 
     return trainable.model
 
 
-def tune_link_prediction(file: str, test_size, samples, embedder_class=HadamardEmbedder, **n2v_kwargs):
+def tune_link_prediction(
+    file: str,
+    test_size,
+    samples,
+    experiment_path=None,
+    embedder_class=HadamardEmbedder,
+    **n2v_kwargs,
+):
     logger.info("Link prediction with neural networks")
     file_path = Path(file)
     assert file_path.exists()
@@ -154,9 +212,15 @@ def tune_link_prediction(file: str, test_size, samples, embedder_class=HadamardE
 
     logger.info("Training Neural Network")
     rfn = f"{file_path.stem}_{embedder_class.__name__}_test:{test_size}_{n2v_params}"
-    save_to = Path.home() / "plots" / file_path.stem
+    save_to = Path.home() / "earthquakes" / "plots" / file_path.stem
     save_to.mkdir(exist_ok=True, parents=True)
-    model = tune_neural_network(train_vectors, train_labels, samples, save_to=save_to / f"{rfn}.csv")
+    model = tune_neural_network(
+        (train_vectors, test_vectors),
+        (train_labels, test_labels),
+        samples,
+        experiment_path=experiment_path,
+        save_to=save_to / f"{rfn}.csv",
+    )
 
     model: nn.Module
     model.eval()
@@ -191,10 +255,41 @@ def tune_link_prediction(file: str, test_size, samples, embedder_class=HadamardE
     plt.title("Confusion Matrix")
     # plt.show()
     plt.gcf().savefig(save_to / f"confusion_matrix_{rfn}.png")
+    roc_auc_score = metrics.roc_auc_score(test_labels, y_pred)
+    precision_score = metrics.precision_score(test_labels, y_pred)
+    recall_score = metrics.recall_score(test_labels, y_pred)
+    f1_score = metrics.f1_score(test_labels, y_pred)
 
-    return (
-        metrics.roc_auc_score(test_labels, y_pred),
-        metrics.precision_score(test_labels, y_pred),
-        metrics.recall_score(test_labels, y_pred),
-        metrics.f1_score(test_labels, y_pred),
+    # Calculate True Positive Rate, True Negative Rate, and Overall Accuracy
+    tn, fp, fn, tp = cm.ravel()
+    tpr = tp / (tp + fn)  # True Positive Rate
+    tnr = tn / (tn + fp)  # True Negative Rate
+    accuracy = (tp + tn) / (tp + tn + fp + fn)  # Overall Accuracy
+
+    # Plot Bar Chart
+    plt.figure()
+    metrics_names = ["True Positive Rate", "True Negative Rate", "Accuracy"]
+    metrics_values = [tpr, tnr, accuracy]
+    bars = plt.bar(metrics_names, metrics_values, color=["blue", "green", "red"])
+    plt.ylim([0, 1])
+    plt.ylabel("Rate")
+    plt.title("Performance Metrics")
+
+    # Add percentage value on top of each bar
+    for bar, value in zip(bars, metrics_values):
+        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{value:.2%}", ha="center", va="bottom")
+
+    plt.gcf().savefig(save_to / f"performance_metrics_{rfn}.png")
+
+    json.dump(
+        {
+            "accuracy": accuracy,
+            "roc_auc_score": roc_auc_score,
+            "precision_score": precision_score,
+            "recall_score": recall_score,
+            "f1_score": f1_score,
+        },
+        open(save_to / f"metrics_{rfn}.json", "w"),
     )
+
+    return (roc_auc_score, precision_score, recall_score, f1_score)
