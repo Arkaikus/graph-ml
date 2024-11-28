@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
-from functools import cache, cached_property
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -48,7 +47,7 @@ class EarthquakeData(Hashable):
     def from_path(cls, file_path: str, **kwargs):
         return cls(pd.read_csv(file_path), **kwargs)
 
-    @cached_property
+    @property
     def data(self) -> pd.DataFrame:
         """cleans the data and tags the nodes if self.grid available"""
         data = self.clean()
@@ -60,7 +59,7 @@ class EarthquakeData(Hashable):
 
         return data
 
-    @cached_property
+    @property
     def normalized_data(self) -> pd.DataFrame:
         return self.normalize(self.data)
 
@@ -74,45 +73,46 @@ class EarthquakeData(Hashable):
         - If time_column=True and delta_time=True calculates the time difference between events in days by default
 
         """
-        processed_data = self.raw_data.copy()
-        for column in self.features:
-            assert column in processed_data.columns, f"[{column}] is not in the dataframe"
+        if not hasattr(self, "processed_data"):
 
-        # Treat columns as numeric values and coerce NaN values
-        processed_data[self.features] = processed_data[self.features].apply(pd.to_numeric, errors="coerce")
+            processed_data = self.raw_data.copy()
+            # Treat columns as numeric values and coerce NaN values
+            processed_data[self.features] = processed_data[self.features].apply(pd.to_numeric, errors="coerce")
 
-        # Filter events with magnitude > self.min_magnitude
-        if "mag" in self.features:
-            mag_mask = (processed_data["mag"] > self.min_magnitude) & (processed_data["mag"] < self.max_magnitude)
-            processed_data = processed_data[mag_mask]
-            processed_data = processed_data[processed_data["magType"].isin(("mb",))]
+            # Filter events with magnitude > self.min_magnitude
+            if "mag" in self.features:
+                mag_mask = (processed_data["mag"] > self.min_magnitude) & (processed_data["mag"] < self.max_magnitude)
+                processed_data = processed_data[mag_mask]
+                processed_data = processed_data[processed_data["magType"].isin(("mb",))]
 
-        if self.time_column:
-            assert "time" in processed_data.columns, "[time] column is not in the dataframe"
-            processed_data = processed_data[["time"] + self.features]
-            processed_data["time"] = pd.to_datetime(processed_data["time"], errors="coerce")
-            # Filter events with year greater than self.min_year
-            if self.min_year:
-                processed_data["event_year"] = processed_data["time"].dt.year
-                processed_data = processed_data[processed_data["event_year"] > self.min_year]
-                processed_data.drop("event_year", axis=1, inplace=True)
+            if self.time_column:
+                assert "time" in processed_data.columns, "[time] column is not in the dataframe"
+                processed_data = processed_data[["time"] + self.features]
+                processed_data["time"] = pd.to_datetime(processed_data["time"], errors="coerce")
+                # Filter events with year greater than self.min_year
+                if self.min_year:
+                    processed_data["event_year"] = processed_data["time"].dt.year
+                    processed_data = processed_data[processed_data["event_year"] > self.min_year]
+                    processed_data.drop("event_year", axis=1, inplace=True)
 
-            # If delta_time=True calculates the time difference between events in days by default
-            if self.delta_time:
-                self.features.append("delta")
-                # delta_values = processed_data["time"] - processed_data["time"].shift()
-                # delta_values.at[0] = pd.Timedelta(0)
-                delta_values = processed_data["time"].diff().fillna(pd.Timedelta(seconds=0))
-                processed_data["delta"] = pd.to_numeric(delta_values.astype("timedelta64[s]"))
-                # if "delta" not in self.zero_columns:
-                #     self.zero_columns.append("delta")
+                # If delta_time=True calculates the time difference between events in days by default
+                if self.delta_time and not "delta" in self.features:
+                    self.features.append("delta")
+                    # delta_values = processed_data["time"] - processed_data["time"].shift()
+                    # delta_values.at[0] = pd.Timedelta(0)
+                    delta_values = processed_data["time"].diff().fillna(pd.Timedelta(seconds=0))
+                    processed_data["delta"] = pd.to_numeric(delta_values.astype("timedelta64[s]"))
+                    # if "delta" not in self.zero_columns:
+                    #     self.zero_columns.append("delta")
 
-            if self.drop_time_column:
-                processed_data.drop("time", axis=1, inplace=True)
-        else:
-            processed_data = processed_data[self.features]
+                if self.drop_time_column and "time":
+                    processed_data.drop("time", axis=1, inplace=True)
+            else:
+                processed_data = processed_data[self.features]
 
-        return processed_data.dropna().reset_index(drop=True)
+            self.processed_data = processed_data.dropna().reset_index(drop=True)
+
+        return self.processed_data
 
     def normalize(self, clean_data: pd.DataFrame, mode="standard"):
         """
