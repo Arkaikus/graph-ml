@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from data.data import EarthquakeData
-from lstm.models.lstm_model import LSTMModel
+from lstm.model import LSTMModel
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint

@@ -3,11 +3,12 @@ import shutil
 from pathlib import Path
 
 import torch
-from data.data import EarthquakeData
-from lstm.base import BaseTrainable
-from lstm.plot import plot_scatter, plot_timeseries
 from ray import tune
 from ray.air import Result
+
+from data.data import EarthquakeData
+from lstm.plot import plot_scatter, plot_timeseries
+from lstm.regression.base import BaseTrainable
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class RegressionTrainable(BaseTrainable):
         def target_idx(y, pred, idx):
             return y[:, idx, None], pred[:, idx, None]
 
-        save_to = Path.home() / "plots" / self.qdata.hash / Path(result.path).stem
+        save_to = Path.cwd() / "plots" / self.qdata.hash / Path(result.path).stem
         shutil.copytree(result.path, save_to, dirs_exist_ok=True)
         for idx, target in enumerate(self.qdata.targets):
             plot_scatter(*target_idx(train_y, train_pred, idx), save_to / f"{target}_train_scatter.png")

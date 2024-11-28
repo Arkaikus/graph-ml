@@ -27,8 +27,8 @@ class LSTMModel(nn.Module):
         # this would preferably be equivalent to the number of lookbacks
         self.lstm = nn.LSTM(lookback, hidden_size, num_layers, batch_first=True)
         self.flatten = nn.Flatten()  # flatten the output of the LSTM layer
-        self.dense = nn.LazyLinear(lookback * hidden_size)
-        self.dense1 = nn.LazyLinear(lookback)
+        # self.dense = nn.LazyLinear(lookback * hidden_size)
+        # self.dense1 = nn.LazyLinear(lookback)
         self.linear = nn.LazyLinear(outputs)
 
     def forward(self, batch_input):
@@ -52,4 +52,3 @@ class LSTMModel(nn.Module):
             config["hidden_size"],
             config["num_layers"],
         )
-

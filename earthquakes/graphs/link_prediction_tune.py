@@ -104,7 +104,12 @@ class GNNTrainable(Trainable):
 
 
 def tune_neural_network(
-    embeddings: tuple, labels: tuple, samples, epochs=20, experiment_path=None, save_to="tuning_results.csv"
+    embeddings: tuple,
+    labels: tuple,
+    samples,
+    epochs=20,
+    experiment_path=None,
+    save_to: Path = Path.cwd() / "tuning_results.csv",
 ):
     """trains and returns the best neural network model using hyperparameter tuning"""
     train_vectors, test_vectors = embeddings
@@ -148,6 +153,7 @@ def tune_neural_network(
     trainable = GNNTrainable(result.config)
     best_checkpoint = result.get_best_checkpoint("accuracy", "max")
     trainable.load_checkpoint(best_checkpoint)
+    torch.save(trainable.model, save_to.parent / "best_model.pth")
 
     result_df = analysis.get_dataframe()
     drop_columns = [c for c in result_df.columns if c.lower().endswith(("embeddings", "labels"))]
@@ -212,7 +218,7 @@ def tune_link_prediction(
 
     logger.info("Training Neural Network")
     rfn = f"{file_path.stem}_{embedder_class.__name__}_test:{test_size}_{n2v_params}"
-    save_to = Path.home() / "earthquakes" / "plots" / file_path.stem
+    save_to = Path.cwd() / "earthquakes" / "plots" / file_path.stem
     save_to.mkdir(exist_ok=True, parents=True)
     model = tune_neural_network(
         (train_vectors, test_vectors),
