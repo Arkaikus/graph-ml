@@ -10,13 +10,12 @@ from settings import read_coordinates
 from .link_prediction import run_link_prediction
 from .link_prediction_nn import run_link_prediction as run_link_prediction_nn
 from .link_prediction_tune import tune_link_prediction
-from .link_prediction_tune_lstm import tune_link_prediction_lstm
 
 logger = logging.getLogger(__name__)
 
 
 def prompt_experiment():
-    ray_results = Path.cwd() / "ray_results"
+    ray_results = Path.home() / "ray_results"
     folders = {
         idx: folder
         for idx, folder in enumerate(
