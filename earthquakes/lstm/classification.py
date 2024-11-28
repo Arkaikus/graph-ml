@@ -1,6 +1,7 @@
 import logging
 import os
 import pdb
+import json
 import shutil
 from pathlib import Path
 
@@ -8,10 +9,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import matplotlib.pyplot as plt
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from torch.utils.data import DataLoader, TensorDataset
+from sklearn import metrics
 
 from data.data import EarthquakeData
 from lstm.model import LSTMModel
@@ -44,17 +47,17 @@ class ClassificationTrainable(tune.Trainable):
 
         assert self.lookback, "[lookback] cannot be None"
 
-        one_hot, binned = qdata.categorical(self.quantiles)
-        features = list(one_hot.columns)
-        (target,) = qdata.targets
-        one_hot["target"] = binned[f"{target}_binned"]
-        sequences, targets = qdata.to_sequences(one_hot, self.lookback, features=features, targets=["target"])
+        self.one_hot, self.binned = qdata.categorical(self.quantiles)
+        features = list(self.one_hot.columns)
+        (self.target,) = qdata.targets
+        self.one_hot["target"] = self.binned[f"{self.target}_binned"]
+        sequences, targets = qdata.to_sequences(self.one_hot, self.lookback, features=features, targets=["target"])
         x_train, x_test, y_train, y_test = qdata.split(
             sequences,
             targets[:, -1],
             test_size=self.test_size,
             shuffle=True,
-            stratify=one_hot["target"][self.lookback :],
+            stratify=self.one_hot["target"][self.lookback :],
         )
 
         self.train_dataset = TensorDataset(x_train, y_train.to(torch.long))
@@ -98,7 +101,7 @@ class ClassificationTrainable(tune.Trainable):
                 all_preds.append(predicted.cpu())
                 all_labels.append(y_batch.cpu())
         all_preds = torch.cat(all_preds).numpy()
-        all_labels = torch.cat(all_labels).numpy()
+        all_labels = torch.cat(all_labels).view(-1).numpy()
         return all_preds, all_labels
 
     def eval(self, loader: DataLoader):
@@ -161,6 +164,34 @@ class ClassificationTrainable(tune.Trainable):
             self.model.load_state_dict(model_state)
             self.optimizer.load_state_dict(optimizer_state)
 
+    def plot(self, save_to: Path):
+        train_pred, train_y = self.eval_loader(self.train_loader)
+        test_pred, test_y = self.eval_loader(self.test_loader)
+
+        plot_confusion_matrix(train_y, train_pred, save_to / "train_confusion.png")
+        plot_confusion_matrix(test_y, test_pred, save_to / "test_confusion.png")
+        plot_roc_auc(train_y, train_pred, self.quantiles, save_to / "roc_auc_train.png")
+        plot_roc_auc(test_y, test_pred, self.quantiles, save_to / "roc_auc.png")
+
+        ax = self.binned[f"{self.target}_binned"].plot(kind="hist", title="Target binned", sharex=True)
+        plt.gcf().savefig(save_to / f"{self.target}_binned.png")
+
+        accuracy = metrics.accuracy_score(test_y, test_pred)
+        roc_auc_score = metrics.roc_auc_score(test_y, test_pred)
+        precision_score = metrics.precision_score(test_y, test_pred)
+        recall_score = metrics.recall_score(test_y, test_pred)
+        f1_score = metrics.f1_score(test_y, test_pred)
+        json.dump(
+            {
+                "accuracy": accuracy,
+                "roc_auc_score": roc_auc_score,
+                "precision_score": precision_score,
+                "recall_score": recall_score,
+                "f1_score": f1_score,
+            },
+            open(save_to / f"metrics.json", "w"),
+        )
+
     def test_result(self, result: Result, metric, mode):
         logger.info("Loading testing from config")
         best_checkpoint = result.get_best_checkpoint(metric, mode)
@@ -169,12 +200,6 @@ class ClassificationTrainable(tune.Trainable):
         print(result.path)
         print(result.metrics_dataframe)
 
-        train_pred, train_y = self.eval_loader(self.train_loader)
-        test_pred, test_y = self.eval_loader(self.test_loader)
-
         save_to = Path.cwd() / "plots" / self.qdata.hash / Path(result.path).stem
         shutil.copytree(result.path, save_to, dirs_exist_ok=True)
-        plot_confusion_matrix(train_y, train_pred, save_to / "train_confusion.png")
-        plot_confusion_matrix(test_y, test_pred, save_to / "test_confusion.png")
-        plot_roc_auc(train_y, train_pred, self.quantiles, save_to / "roc_auc_train.png")
-        plot_roc_auc(test_y, test_pred, self.quantiles, save_to / "roc_auc.png")
+        self.plot(save_to)

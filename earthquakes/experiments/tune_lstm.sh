@@ -1,7 +1,3 @@
-quakes lstm tune --samples 10 --classify t --metric accuracy --mode max
-quakes lstm tune --samples 10 --classify t --networkx t --node-size 50 --metric accuracy --mode max
-quakes lstm tune --samples 10 --classify t --networkx t --node-size 100 --metric accuracy --mode max
-quakes lstm tune --samples 10 --classify t --networkx t --node-size 150 --metric accuracy --mode max
-
-quakes lstm test --classify t --metric accuracy --mode max
-
+# quakes lstm tune --quantiles 2 --samples 10 --metric accuracy --mode max
+quakes lstm tune --quantiles 3 --samples 10 --metric accuracy --mode max
+quakes lstm tune --quantiles 4 --samples 10 --metric accuracy --mode max

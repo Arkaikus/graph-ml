@@ -141,5 +141,6 @@ def plot_roc_auc(all_labels, all_preds, quantiles, save_to):
         plt.title(f"ROC AUC Curve for {quantiles} classes")
         plt.legend(loc="lower right")
         plt.gcf().savefig(save_to)
+        plt.close()
     except:
         logger.exception("Error plotting ROC AUC curve")

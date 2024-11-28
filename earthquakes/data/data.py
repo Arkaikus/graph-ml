@@ -287,6 +287,6 @@ class EarthquakeData(Hashable):
         """
         data, bin_cols = self.cut(self.data, quantiles=quantiles)
         one_hot = self.one_hot(data)
-        concat = pd.concat((one_hot, self.data.drop(columns=["node"], errors="ignore")), axis=1)
+        concat = pd.concat((one_hot, data.drop(columns=["node"], errors="ignore")), axis=1)
         nobins = list(set(concat.columns) - set(bin_cols))
         return concat[nobins], concat[bin_cols]

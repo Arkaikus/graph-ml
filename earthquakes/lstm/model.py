@@ -40,10 +40,10 @@ class LSTMModel(nn.Module):
         # this will turn (batch_size, sequence, hidden_size) into (batch_size, sequence * hidden_size)
         # leaving a W*x + b operation to be done by the linear layer with all of the hidden states
         flatten = self.flatten(out)
-        dense = nn.functional.sigmoid(self.dense(flatten))
-        dense = nn.functional.sigmoid(self.dense1(dense))
+        # dense = nn.functional.sigmoid(self.dense(flatten))
+        # dense = nn.functional.sigmoid(self.dense1(dense))
         # return is (batch_size, 1)
-        return self.linear(dense)
+        return self.linear(flatten)
 
     @classmethod
     def from_config(cls, config: dict):

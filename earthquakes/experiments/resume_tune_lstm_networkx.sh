@@ -1,0 +1,3 @@
+quakes lstm tune --quantiles 2 --samples 100 --metric accuracy --mode max --networkx t -ex ~/ray_results/ClassificationTrainable_2024-11-28_16-32-56
+quakes lstm tune --quantiles 3 --samples 100 --metric accuracy --mode max --networkx t -ex ~/ray_results/ClassificationTrainable_2024-11-28_16-47-25
+quakes lstm tune --quantiles 4 --samples 100 --metric accuracy --mode max --networkx t -ex ~/ray_results/ClassificationTrainable_2024-11-28_17-03-50

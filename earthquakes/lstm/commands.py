@@ -81,6 +81,7 @@ def save_experiment_df(results: ResultGrid, metric, mode, qdata: EarthquakeData,
 @click.option("--mode", type=str, help="mode", default="min")
 @click.option("--networkx", type=bool, help="mode", default=False)
 @click.option("--node-size", type=int, help="size of node in kms", default=100)
+@click.option("--quantiles", type=int, help="number of categories", default=2)
 @click.option("-s", "--samples", type=int, help="samples", default=-1)
 @click.option("-resume", "--resume", type=bool, help="resume experiment", default=False)
 @click.option("-ex", "--experiment", type=str, help="resume experiment path", default=None)
@@ -99,6 +100,7 @@ def tune_command(
     mode: str,
     networkx: bool,
     node_size: int,
+    quantiles: int,
     samples,
     resume,
     experiment,
@@ -108,9 +110,10 @@ def tune_command(
     """
     Reads a processed .csv catalog and trains an LSTM neural network
 
-    quakes lstm tune --samples 1 --metric accuracy --mode max
-    quakes lstm tune --samples 10 --metric accuracy --mode max
-    quakes lstm tune --samples 10 --metric accuracy --mode max -ex ~/ray_results/ClassificationTrainable_2024-11-28_03-17-15
+    quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max
+    quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max -ex ~/ray_results/ClassificationTrainable_2024-11-28_13-08-36
+    quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max --networkx
+    quakes lstm tune --quantiles 2 --samples 10 --metric accuracy --mode max
     """
     logger.info("Downloading data...")
     latitude = (min_lat, max_lat)
@@ -143,7 +146,7 @@ def tune_command(
         "lstm_layers": tune.randint(2, 10),
         "lr": tune.loguniform(1e-4, 1e-2),
         "max_epochs": tune.randint(10, 70),
-        "quantiles": tune.randint(2, 6),
+        "quantiles": quantiles,
         **param_space,
     }
 
