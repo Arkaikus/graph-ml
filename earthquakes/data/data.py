@@ -1,17 +1,18 @@
 from __future__ import annotations
+
 import logging
-from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import torch
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
+from .graphs import networkx_property, nodes2graph
 from .grid import Grid
 from .hash import Hashable
-from .graphs import nodes2graph, networkx_property
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class EarthquakeData(Hashable):
     network_lookback: int = 5
 
     def __post_init__(self):
-        if not "time" in self.raw_data.columns:
+        if "time" not in self.raw_data.columns:
             self.time_column = False
             self.delta_time = False
             self.drop_time_column = False
@@ -74,7 +75,8 @@ class EarthquakeData(Hashable):
 
         """
         if not hasattr(self, "processed_data"):
-
+            # Effective feature list for this run (may include "delta"); do not mutate self.features
+            self._features_used = list(self.features)
             processed_data = self.raw_data.copy()
             # Treat columns as numeric values and coerce NaN values
             processed_data[self.features] = processed_data[self.features].apply(pd.to_numeric, errors="coerce")
@@ -87,7 +89,7 @@ class EarthquakeData(Hashable):
 
             if self.time_column:
                 assert "time" in processed_data.columns, "[time] column is not in the dataframe"
-                processed_data = processed_data[["time"] + self.features]
+                processed_data = processed_data[["time"] + self._features_used]
                 processed_data["time"] = pd.to_datetime(processed_data["time"], errors="coerce")
                 # Filter events with year greater than self.min_year
                 if self.min_year:
@@ -95,20 +97,16 @@ class EarthquakeData(Hashable):
                     processed_data = processed_data[processed_data["event_year"] > self.min_year]
                     processed_data.drop("event_year", axis=1, inplace=True)
 
-                # If delta_time=True calculates the time difference between events in days by default
-                if self.delta_time and not "delta" in self.features:
-                    self.features.append("delta")
-                    # delta_values = processed_data["time"] - processed_data["time"].shift()
-                    # delta_values.at[0] = pd.Timedelta(0)
+                # If delta_time=True add time difference; extend _features_used without mutating self.features
+                if self.delta_time and "delta" not in self._features_used:
                     delta_values = processed_data["time"].diff().fillna(pd.Timedelta(seconds=0))
                     processed_data["delta"] = pd.to_numeric(delta_values.astype("timedelta64[s]"))
-                    # if "delta" not in self.zero_columns:
-                    #     self.zero_columns.append("delta")
+                    self._features_used = list(self.features) + ["delta"]
 
-                if self.drop_time_column and "time":
-                    processed_data.drop("time", axis=1, inplace=True)
+                if self.drop_time_column and "time" in processed_data.columns:
+                    processed_data = processed_data.drop("time", axis=1)
             else:
-                processed_data = processed_data[self.features]
+                processed_data = processed_data[self._features_used]
 
             self.processed_data = processed_data.dropna().reset_index(drop=True)
 
@@ -123,11 +121,12 @@ class EarthquakeData(Hashable):
         :params scaler: sklearn MinMaxScaler or similar
         """
         data = clean_data.copy()
+        features = getattr(self, "_features_used", self.features)
         if mode == "standard":
             scaler = StandardScaler()
-            data[self.features] = pd.DataFrame(
-                scaler.fit_transform(data[self.features]),
-                columns=self.features,
+            data[features] = pd.DataFrame(
+                scaler.fit_transform(data[features]),
+                columns=features,
             )
         else:
             logger.warning("No scaler class detected")
@@ -246,8 +245,8 @@ class EarthquakeData(Hashable):
             false by default, due to the nature of time series data
         """
         if torch_tensor:
-            sequences = torch.Tensor(sequences).to(torch.float32)
-            targets = torch.Tensor(targets).to(torch.float32)
+            sequences = torch.tensor(sequences, dtype=torch.float32)
+            targets = torch.tensor(targets, dtype=torch.float32)
 
         return train_test_split(
             sequences,

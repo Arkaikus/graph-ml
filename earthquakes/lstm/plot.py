@@ -11,7 +11,6 @@ from sklearn.metrics import (
     mean_absolute_percentage_error,
     mean_squared_error,
     r2_score,
-    recall_score,
     roc_auc_score,
     roc_curve,
 )
@@ -26,17 +25,17 @@ def metrics(original, forecast):
     """
     Returns the metrics for the forecasted data
     """
-    MSE = mean_squared_error(original, forecast)
-    MAE = mean_absolute_error(original, forecast)
-    R2 = r2_score(original, forecast)
-    MAPE = mean_absolute_percentage_error(original, forecast)
-    RMSE = np.sqrt(MSE)
+    mse = mean_squared_error(original, forecast)
+    mae = mean_absolute_error(original, forecast)
+    r2 = r2_score(original, forecast)
+    mape = mean_absolute_percentage_error(original, forecast)
+    rmse = np.sqrt(mse)
     return {
-        "MSE": MSE,
-        "MAE": MAE,
-        "R2": R2,
-        "MAPE": MAPE,
-        "RMSE": RMSE,
+        "MSE": mse,
+        "MAE": mae,
+        "R2": r2,
+        "MAPE": mape,
+        "RMSE": rmse,
     }
 
 
@@ -47,16 +46,16 @@ def plot_scatter(original, forecast, save_to):
     it uses seaborn to plot the scatter plot with a regression line
     """
 
-    MSE = mean_squared_error(original, forecast)
-    MAE = mean_absolute_error(original, forecast)
-    R2 = r2_score(original, forecast)
-    MAPE = mean_absolute_percentage_error(original, forecast)
-    RMSE = np.sqrt(MSE)
-    logger.info("Best trial R2 %s", R2)
-    logger.info("Best trial MSE: %s", MSE)
-    logger.info("Best trial RMSE: %s", RMSE)
-    logger.info("Best trial MAE: %s", MAE)
-    logger.info("Best trial MAPE: %s", MAPE)
+    mse = mean_squared_error(original, forecast)
+    mae = mean_absolute_error(original, forecast)
+    r2 = r2_score(original, forecast)
+    mape = mean_absolute_percentage_error(original, forecast)
+    rmse = np.sqrt(mse)
+    logger.info("Best trial R2 %s", r2)
+    logger.info("Best trial MSE: %s", mse)
+    logger.info("Best trial RMSE: %s", rmse)
+    logger.info("Best trial MAE: %s", mae)
+    logger.info("Best trial MAPE: %s", mape)
 
     hstack = np.hstack((original, forecast))
     logger.info("Hstack %s", hstack.shape)
@@ -75,7 +74,7 @@ def plot_scatter(original, forecast, save_to):
     plt.figtext(
         0.15,
         0.70,
-        f"R2: {R2:.2f}\nMSE: {MSE:.2f}\nMAE: {MAE:.2f}\nMAPE:{MAPE:.2f}",
+        f"R2: {r2:.2f}\nMSE: {mse:.2f}\nMAE: {mae:.2f}\nMAPE:{mape:.2f}",
         bbox=dict(facecolor="white", alpha=0.5),
         fontsize=12,
     )
@@ -142,5 +141,5 @@ def plot_roc_auc(all_labels, all_preds, quantiles, save_to):
         plt.legend(loc="lower right")
         plt.gcf().savefig(save_to)
         plt.close()
-    except:
+    except Exception:
         logger.exception("Error plotting ROC AUC curve")

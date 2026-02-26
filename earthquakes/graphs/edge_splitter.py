@@ -99,7 +99,7 @@ class EdgeSplitter:
             p (float): Percent of edges to be returned. It is calculated as a function of the total number of edges
              in the original graph.
             method (default:global): How negative edges are sampled. If 'global', then nodes are selected at random.
-            seed (int, optional): seed for random number generator, positive int or 0
+            seed (int, optional): RNG seed (non-negative). If None, runs are not reproducible.
 
         Returns:
             The reduced graph (positive edges removed) and the edge data as 2 numpy arrays, the first array of
@@ -110,8 +110,8 @@ class EdgeSplitter:
         """
         assert 0 <= test_size <= 1, "The value of p must be in the interval (0,1)"
         if seed is not None:
-            assert isinstance(seed, int)
-            assert seed > 0
+            if not isinstance(seed, int) or seed < 0:
+                raise ValueError("seed must be a non-negative int")
             self._random = np.random.RandomState(seed=seed)
 
         reduced_graph, test_edge_data, test_edge_labels = self.ttt_global(graph, None, p=test_size)  # take p
@@ -203,11 +203,11 @@ class EdgeSplitter:
         num_edges_to_remove = int(_graph.number_of_edges() * p)
 
         if num_edges_to_remove > (_graph.number_of_edges() - len(minedges)):
-            raise ValueError(
-                "Not enough positive edges to sample after reserving {} number of edges for maintaining graph connectivity. Consider setting keep_connected=False.".format(
-                    len(minedges)
-                )
-            )
+            msg = (
+                "Not enough positive edges to sample after reserving {} edges for "
+                "connectivity. Consider setting keep_connected=False."
+            ).format(len(minedges))
+            raise ValueError(msg)
 
         # shuffle the edges
         self._random.shuffle(all_edges)

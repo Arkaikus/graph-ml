@@ -1,28 +1,25 @@
+import json
 import logging
 import os
-import pdb
-import json
 import shutil
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
-from torch.utils.data import DataLoader, TensorDataset
 from sklearn import metrics
+from torch.utils.data import DataLoader, TensorDataset
 
 from data.data import EarthquakeData
 from lstm.model import LSTMModel
 from lstm.plot import plot_confusion_matrix, plot_roc_auc
 
 logger = logging.getLogger(__name__)
-
-import torch.nn as nn
 
 
 class ClassificationTrainable(tune.Trainable):
@@ -111,7 +108,10 @@ class ClassificationTrainable(tune.Trainable):
         self.model.eval()
         with torch.no_grad():
             for input_batch, output_batch in loader:
-                input_batch, output_batch = input_batch.to(self.device), output_batch.to(self.device).view(-1)
+                input_batch, output_batch = (
+                    input_batch.to(self.device),
+                    output_batch.to(self.device).view(-1),
+                )
                 output = self.model(input_batch)
                 loss = self.criterion(output, output_batch)
                 test_loss += loss.item() * input_batch.size(0)
@@ -148,9 +148,9 @@ class ClassificationTrainable(tune.Trainable):
                 return True
         return self.epoch >= self.max_epochs - 1
 
-    def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
+    def save_checkpoint(self, checkpoint_dir: str) -> dict | None:
         self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint.pth")
+        checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pth")
         state = (self.model.state_dict(), self.optimizer.state_dict())
         torch.save(state, checkpoint_path)
 
@@ -173,7 +173,7 @@ class ClassificationTrainable(tune.Trainable):
         plot_roc_auc(train_y, train_pred, self.quantiles, save_to / "roc_auc_train.png")
         plot_roc_auc(test_y, test_pred, self.quantiles, save_to / "roc_auc.png")
 
-        ax = self.binned[f"{self.target}_binned"].plot(kind="hist", title="Target binned", sharex=True)
+        self.binned[f"{self.target}_binned"].plot(kind="hist", title="Target binned", sharex=True)
         plt.gcf().savefig(save_to / f"{self.target}_binned.png")
 
         accuracy = metrics.accuracy_score(test_y, test_pred)
@@ -189,11 +189,11 @@ class ClassificationTrainable(tune.Trainable):
                 "recall_score": recall_score,
                 "f1_score": f1_score,
             },
-            open(save_to / f"metrics.json", "w"),
+            open(save_to / "metrics.json", "w"),
         )
 
     def test_result(self, result: Result, metric, mode):
-        logger.info("Loading testing from config")
+        logger.info("Loading testing checkpoint")
         best_checkpoint = result.get_best_checkpoint(metric, mode)
         self.load_checkpoint(best_checkpoint)
 

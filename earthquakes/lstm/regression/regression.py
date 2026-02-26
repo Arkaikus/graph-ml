@@ -3,10 +3,8 @@ import shutil
 from pathlib import Path
 
 import torch
-from ray import tune
 from ray.air import Result
 
-from data.data import EarthquakeData
 from lstm.plot import plot_scatter, plot_timeseries
 from lstm.regression.base import BaseTrainable
 
@@ -25,7 +23,7 @@ class RegressionTrainable(BaseTrainable):
         return self.y_train[:, -1].numpy(), train_output, self.y_test[:, -1].numpy(), test_output
 
     def test_result(self, result: Result, metric, mode):
-        logger.info("Loading testing from config")
+        logger.info("Loading testing checkpoint")
         best_checkpoint = result.get_best_checkpoint(metric, mode)
         self.load_checkpoint(best_checkpoint)
 
@@ -42,7 +40,15 @@ class RegressionTrainable(BaseTrainable):
         for idx, target in enumerate(self.qdata.targets):
             plot_scatter(*target_idx(train_y, train_pred, idx), save_to / f"{target}_train_scatter.png")
             plot_scatter(*target_idx(test_y, test_pred, idx), save_to / f"{target}_test_scatter.png")
-            plot_timeseries(*target_idx(train_y, train_pred, idx), target, save_to / f"{target}_train_timeseries.png")
-            plot_timeseries(*target_idx(test_y, test_pred, idx), target, save_to / f"{target}_test_timeseries.png")
+            plot_timeseries(
+                *target_idx(train_y, train_pred, idx),
+                target,
+                save_to / f"{target}_train_timeseries.png",
+            )
+            plot_timeseries(
+                *target_idx(test_y, test_pred, idx),
+                target,
+                save_to / f"{target}_test_timeseries.png",
+            )
 
         result.metrics_dataframe[["loss", "test_loss"]].plot(legend=True).get_figure().savefig(save_to / "loss.png")

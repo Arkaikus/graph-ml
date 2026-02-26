@@ -7,13 +7,14 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data.store import Store
 from gensim.models import Word2Vec
 from node2vec import Node2Vec
 from node2vec.edges import HadamardEmbedder
 from sklearn import metrics
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
+
+from data.store import Store
 
 from .edge_splitter import EdgeSplitter
 from .model import SimpleNN
@@ -51,7 +52,7 @@ def train_neural_network(embeddings, labels, epochs=10, batch_size=32, learning_
             loss.backward()
             optimizer.step()
 
-        tqdm.write(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item()}")
+        tqdm.write(f"Epoch {epoch + 1}/{epochs}, Loss: {loss.item()}")
 
     return model
 
@@ -81,7 +82,6 @@ def run_link_prediction(file: str, test_size, embedder_class=HadamardEmbedder, *
     test_vectors = np.array([embeddings[u, v] for u, v in test_samples])
 
     logger.info("Training Neural Network")
-    rfn = f"{file_path.stem}_{embedder_class.__name__}_test:{test_size}_{n2v_params}"
     model = train_neural_network(train_vectors, train_labels)
 
     model.eval()

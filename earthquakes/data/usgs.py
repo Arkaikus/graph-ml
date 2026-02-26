@@ -1,13 +1,15 @@
-import traceback
+import logging
 from hashlib import md5
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 
 class USGS:
-
     query_url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
     supported_kwargs = [
         "format",
@@ -41,23 +43,25 @@ class USGS:
         "eventtype",
     ]
 
-    def __init__(self, latitude, longitude) -> None:
+    def __init__(self, latitude: tuple[float, float], longitude: tuple[float, float]) -> None:
         """
-        :param latitude: tuple of 2, (minlatitude, maxlatitude)
-        :param longitude: tuple of 2, (minlongitude, maxlongitude)
+        :param latitude: (min_latitude, max_latitude)
+        :param longitude: (min_longitude, max_longitude)
         """
-        assert isinstance(latitude, (list, tuple)) and len(latitude) == 2
-        assert isinstance(longitude, (list, tuple)) and len(longitude) == 2
-        self.minlatitude, self.maxlatitude = latitude
-        self.minlongitude, self.maxlongitude = longitude
+        if not isinstance(latitude, (list, tuple)) or len(latitude) != 2:
+            raise ValueError("latitude must be a sequence of 2 floats (min, max)")
+        if not isinstance(longitude, (list, tuple)) or len(longitude) != 2:
+            raise ValueError("longitude must be a sequence of 2 floats (min, max)")
+        self.minlatitude, self.maxlatitude = float(latitude[0]), float(latitude[1])
+        self.minlongitude, self.maxlongitude = float(longitude[0]), float(longitude[1])
 
     def download(
         self,
-        format="csv",
-        starttime="1975-01-01",
-        orderby="time-asc",
-        evettype="earthquake",
-        force_download=False,
+        format: str = "csv",
+        starttime: str = "1975-01-01",
+        orderby: str = "time-asc",
+        eventtype: str = "earthquake",
+        force_download: bool = False,
         **kwargs,
     ) -> pd.DataFrame:
         params = {
@@ -68,21 +72,24 @@ class USGS:
             "minlongitude": self.minlongitude,
             "maxlongitude": self.maxlongitude,
             "orderby": orderby,
-            "eventtype": evettype,
+            "eventtype": eventtype,
         }
-        [params.update({k: v}) for k, v in kwargs.items() if k in self.supported_kwargs]
+        for k, v in kwargs.items():
+            if k in self.supported_kwargs:
+                params[k] = v
         query = urlencode(params)
         query_hash = md5(query.encode("utf-8")).hexdigest()
         file_path = Path(f"csv/{query_hash}.csv")
         file_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             if file_path.exists() and not force_download:
-                data = pd.read_csv(file_path)
-            else:
-                data = pd.read_csv(self.query_url + "?" + query)
-                data.to_csv(file_path, index=False)
-
+                return pd.read_csv(file_path)
+            data = pd.read_csv(self.query_url + "?" + query)
+            data.to_csv(file_path, index=False)
             return data
-        except:
-            traceback.print_exc()
+        except (HTTPError, URLError, OSError, ConnectionError) as e:
+            logger.exception("USGS request failed: %s", e)
             return pd.DataFrame()
+        except Exception as e:
+            logger.exception("Unexpected error loading USGS data: %s", e)
+            raise

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import click
 import pandas as pd
+
 from data.data import EarthquakeData
 from data.grid import Grid
 from settings import read_coordinates
@@ -72,10 +73,15 @@ def edge_list(file, distance, features):
 
 @click.command()
 @click.option("-f", "--file", type=str, help="Csv containing a list of graph edges")
-@click.option("-nn", "--neural-network", type=bool, help="wheter to use neural networks", default=False)
+@click.option(
+    "-nn",
+    "--neural-network",
+    is_flag=True,
+    help="Use neural network for link prediction (default: RandomForest)",
+)
 def link_prediction(file, neural_network):
     """
-    Takes an edge_list generated .csv file and runs the Stamille's Graph Machine Learning Book, Link prediciton algorithm
+    Run link prediction from Stamille's Graph ML Book (edge list CSV -> RF or NN).
 
     ## Usage
 
@@ -105,7 +111,7 @@ def link_prediction(file, neural_network):
 @click.option("-ex", "--experiment", type=str, help="resume experiment path", default=None)
 def link_prediction_tune(file, samples, resume, experiment):
     """
-    Takes an edge_list generated .csv file and runs the Stamille's Graph Machine Learning Book, Link prediciton algorithm
+    Tune link prediction (Stamille's Graph ML Book) over edge list CSV.
 
     ## Usage
 

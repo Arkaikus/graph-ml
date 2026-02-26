@@ -2,20 +2,28 @@ import geopy
 import geopy.distance as gpd
 import pandas as pd
 
+from validation import GridConfig
+
 from .hash import Hashable
 
 
 class Grid(Hashable):
     def __init__(self, latitude, longitude, distance=100, **kwargs):
         """
-        Takes the latitude (min, max) and longitude (min, max) and the distance size of each node in km
+        Takes the latitude (min, max) and longitude (min, max) and the distance size of each node in km.
         """
-        assert isinstance(latitude, (list, tuple)) and len(latitude) == 2
-        assert isinstance(longitude, (list, tuple)) and len(longitude) == 2
-
-        self.min_latitude, self.max_latitude = latitude
-        self.min_longitude, self.max_longitude = longitude
-        self.distance = distance
+        cfg = GridConfig(
+            min_latitude=float(latitude[0]),
+            max_latitude=float(latitude[1]),
+            min_longitude=float(longitude[0]),
+            max_longitude=float(longitude[1]),
+            distance_km=float(distance),
+        )
+        self.min_latitude = cfg.min_latitude
+        self.max_latitude = cfg.max_latitude
+        self.min_longitude = cfg.min_longitude
+        self.max_longitude = cfg.max_longitude
+        self.distance = cfg.distance_km
 
         self.origin = (self.min_latitude, self.min_longitude)
         self.width = gpd.distance(self.origin, (self.min_latitude, self.max_longitude)).km

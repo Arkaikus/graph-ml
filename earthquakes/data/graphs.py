@@ -1,6 +1,7 @@
+from functools import partial
+
 import networkx as nx
 import pandas as pd
-from functools import partial
 
 
 def nodes2graph(nodes, max_nodes, max_prev=5) -> nx.Graph:
@@ -59,13 +60,13 @@ def networkx_property(graph: nx.Graph, property: str) -> pd.DataFrame:
     if property not in properties:
         return None
 
-    G = graph.copy()
+    g = graph.copy()
     # Remove isolated nodes
-    isolates = list(nx.isolates(G))
-    G.remove_nodes_from(isolates)
+    isolates = list(nx.isolates(g))
+    g.remove_nodes_from(isolates)
 
     property_fn = properties[property]
-    prop = property_fn(G)
+    prop = property_fn(g)
 
     # Default excluded nodes to zero
     for isolate in isolates:

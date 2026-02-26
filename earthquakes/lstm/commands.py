@@ -1,5 +1,4 @@
 import logging
-import os
 import pickle
 from pathlib import Path
 
@@ -25,7 +24,10 @@ def save_experiment_df(results: ResultGrid, metric, mode, qdata: EarthquakeData,
     results_df = results_df.sort_values(by=metric, ascending=(mode == "min"))
     print(results_df.columns)
 
-    results_df = results_df.map(lambda x: f"{x:.3f}" if isinstance(x, float) else x)
+    def _fmt(x):
+        return f"{x:.3f}" if isinstance(x, float) else x
+
+    results_df = results_df.apply(lambda col: col.map(_fmt) if col.dtype.kind == "f" else col)
     extra_columns = ["accuracy", "config/quantiles"]
 
     if networkx:
@@ -111,8 +113,8 @@ def tune_command(
     Reads a processed .csv catalog and trains an LSTM neural network
 
     quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max
-    quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max -ex ~/ray_results/ClassificationTrainable_2024-11-28_13-08-36
-    quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max --networkx
+    quakes lstm tune ... -ex ~/ray_results/ClassificationTrainable_2024-11-28_13-08-36
+    quakes lstm tune ... --networkx
     quakes lstm tune --quantiles 2 --samples 10 --metric accuracy --mode max
     """
     logger.info("Downloading data...")
@@ -124,7 +126,13 @@ def tune_command(
     if networkx:
         grid = Grid(latitude, longitude, node_size)
         kwargs["grid"] = grid
-        nx_features = ["degree_centrality", "clustering", "betweenness_centrality", "closeness_centrality", "pagerank"]
+        nx_features = [
+            "degree_centrality",
+            "clustering",
+            "betweenness_centrality",
+            "closeness_centrality",
+            "pagerank",
+        ]
         param_space["network_features"] = tune.grid_search(nx_features)
         param_space["network_lookback"] = tune.randint(1, 10)
         param_space["node_size"] = node_size
@@ -170,9 +178,9 @@ def tune_command(
             tune_config=tune.TuneConfig(
                 scheduler=scheduler,
                 num_samples=samples,
-                max_concurrent_trials=None,
+                max_concurrent_trials=2,
             ),
-            run_config=RunConfig(),
+            run_config=RunConfig(name="ClassificationTrainable"),
             param_space=param_space,
         )
 
@@ -182,7 +190,7 @@ def tune_command(
     trainable: Trainable = tune.with_parameters(Trainable, qdata=qdata)(config=best_result.config)
     try:
         trainable.test_result(best_result, metric, mode)
-    except:
+    except Exception:
         logger.error("Error testing best result")
 
     logger.info("Saving qdata at %s", Path(results.experiment_path) / "qdata.pkl")

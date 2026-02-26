@@ -1,6 +1,6 @@
+import json
 import logging
 import os
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -10,16 +10,18 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data.store import Store
 from gensim.models import Word2Vec
 from node2vec import Node2Vec
 from node2vec.edges import HadamardEmbedder
 from ray import tune
+from ray.train import RunConfig
 from ray.tune import Trainable
 from ray.tune.schedulers import ASHAScheduler
 from sklearn import metrics
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, roc_curve
 from torch.utils.data import DataLoader, TensorDataset
+
+from data.store import Store
 
 from .edge_splitter import EdgeSplitter
 from .model import SimpleNN
@@ -90,7 +92,7 @@ class GNNTrainable(Trainable):
         }
 
     def save_checkpoint(self, checkpoint_dir):
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint.pth")
+        checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pth")
         state = (self.model.state_dict(), self.optimizer.state_dict())
         torch.save(state, checkpoint_path)
 
@@ -110,47 +112,63 @@ def tune_neural_network(
     epochs=20,
     experiment_path=None,
     save_to: Path = Path.cwd() / "tuning_results.csv",
+    run_name: str = "GNNTrainable",
+    max_concurrent_trials: int = 2,
 ):
-    """trains and returns the best neural network model using hyperparameter tuning"""
+    """Trains and returns the best neural network model using hyperparameter tuning.
+    Embedding data is passed via tune.with_parameters to avoid serializing large arrays per trial.
+    """
     train_vectors, test_vectors = embeddings
     train_labels, test_labels = labels
     input_dim = train_vectors.shape[1]
-    config = {
+    param_space = {
         "input_dim": input_dim,
         "hidden_dim1": tune.choice([64, 128, 256]),
         "hidden_dim2": tune.choice([32, 64, 128]),
         "learning_rate": tune.loguniform(1e-4, 1e-2),
         "batch_size": tune.choice([16, 32, 64]),
+    }
+    trainable_cls = tune.with_parameters(
+        GNNTrainable,
+        train_embeddings=train_vectors,
+        test_embeddings=test_vectors,
+        train_labels=train_labels,
+        test_labels=test_labels,
+    )
+    trainable_cls = tune.with_resources(trainable_cls, resources={"cpu": 8, "gpu": 1})
+    run_config = RunConfig(name=run_name)
+    scheduler = ASHAScheduler(metric="loss", mode="min", max_t=epochs, grace_period=1, reduction_factor=2)
+    if experiment_path:
+        tuner = tune.Tuner.restore(
+            path=experiment_path.absolute().as_posix(),
+            trainable=trainable_cls,
+            resume_unfinished=True,
+            resume_errored=True,
+            param_space=param_space,
+        )
+    else:
+        tuner = tune.Tuner(
+            trainable_cls,
+            param_space=param_space,
+            tune_config=tune.TuneConfig(
+                scheduler=scheduler,
+                num_samples=samples,
+                max_concurrent_trials=max_concurrent_trials,
+            ),
+            run_config=run_config,
+        )
+
+    analysis = tuner.fit()
+    result = analysis.get_best_result("accuracy", "max")
+    # Reattach embedding data for checkpoint loading (not stored in result.config)
+    best_config = {
+        **result.config,
         "train_embeddings": train_vectors,
         "test_embeddings": test_vectors,
         "train_labels": train_labels,
         "test_labels": test_labels,
     }
-
-    scheduler = ASHAScheduler(metric="loss", mode="min", max_t=epochs, grace_period=1, reduction_factor=2)
-    trainable = tune.with_resources(GNNTrainable, resources={"cpu": 8, "gpu": 1})
-    if experiment_path:
-        tuner = tune.Tuner.restore(
-            path=experiment_path.absolute().as_posix(),
-            trainable=trainable,  # Replace with your actual trainable class
-            resume_unfinished=True,  # Continue unfinished trials
-            resume_errored=True,  # Resume errored trials
-            param_space=config,
-        )
-    else:
-        tuner = tune.Tuner(
-            trainable,
-            param_space=config,
-            tune_config=tune.TuneConfig(
-                scheduler=scheduler,
-                num_samples=samples,
-                max_concurrent_trials=None,
-            ),
-        )
-
-    analysis = tuner.fit()
-    result = analysis.get_best_result("accuracy", "max")
-    trainable = GNNTrainable(result.config)
+    trainable = GNNTrainable(best_config)
     best_checkpoint = result.get_best_checkpoint("accuracy", "max")
     trainable.load_checkpoint(best_checkpoint)
     torch.save(trainable.model, save_to.parent / "best_model.pth")
@@ -218,7 +236,7 @@ def tune_link_prediction(
 
     logger.info("Training Neural Network")
     rfn = f"{file_path.stem}_{embedder_class.__name__}_test:{test_size}_{n2v_params}"
-    save_to = Path.cwd() / "earthquakes" / "plots" / file_path.stem
+    save_to = Path.cwd() / "plots" / file_path.stem
     save_to.mkdir(exist_ok=True, parents=True)
     model = tune_neural_network(
         (train_vectors, test_vectors),
@@ -226,6 +244,7 @@ def tune_link_prediction(
         samples,
         experiment_path=experiment_path,
         save_to=save_to / f"{rfn}.csv",
+        run_name=f"link_pred_{file_path.stem}",
     )
 
     model: nn.Module
@@ -283,7 +302,13 @@ def tune_link_prediction(
 
     # Add percentage value on top of each bar
     for bar, value in zip(bars, metrics_values):
-        plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{value:.2%}", ha="center", va="bottom")
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{value:.2%}",
+            ha="center",
+            va="bottom",
+        )
 
     plt.gcf().savefig(save_to / f"performance_metrics_{rfn}.png")
 

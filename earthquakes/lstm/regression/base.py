@@ -5,13 +5,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from data.data import EarthquakeData
-from lstm.model import LSTMModel
 from ray import tune
 from ray.air import Result
 from ray.train import Checkpoint
 from torch.utils.data import DataLoader, TensorDataset
 from torchmetrics.regression import MeanAbsolutePercentageError
+
+from data.data import EarthquakeData
+from lstm.model import LSTMModel
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,12 @@ class BaseTrainable(tune.Trainable):
 
     def setup_model(self):
         self.model = self.get_model()
-        loss_types = {"mse": nn.MSELoss, "huber": nn.HuberLoss, "mape": MeanAbsolutePercentageError, "mae": nn.L1Loss}
+        loss_types = {
+            "mse": nn.MSELoss,
+            "huber": nn.HuberLoss,
+            "mape": MeanAbsolutePercentageError,
+            "mae": nn.L1Loss,
+        }
         loss_class = loss_types.get(self.loss_type, nn.MSELoss)
         self.criterion = loss_class().to(self.device)
         self.optimizer = optim.RMSprop(self.model.parameters(), lr=self.learning_rate)
@@ -153,10 +159,10 @@ class BaseTrainable(tune.Trainable):
         logger.info("epoch metrics: %s eval_metrics: %s", epoch_metrics, eval_metrics)
         return metrics
 
-    def save_checkpoint(self, checkpoint_dir: str) -> torch.Dict | None:
+    def save_checkpoint(self, checkpoint_dir: str) -> dict | None:
         """saves checkpoint at the end of training"""
         self.logger.info("Saving model and optimizer to %s", checkpoint_dir)
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint.pth")
+        checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pth")
         state = (self.model.state_dict(), self.optimizer.state_dict())
         torch.save(state, checkpoint_path)
 
