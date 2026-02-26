@@ -56,4 +56,4 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["main", "settings", "config"]
+py-modules = ["main", "settings", "validation"]
