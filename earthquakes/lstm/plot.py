@@ -1,30 +1,41 @@
-import logging
-from itertools import cycle
+"""Plotting utilities. Generic helpers and re-exports from task-specific modules."""
 
+import logging
+
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import (
-    confusion_matrix,
     mean_absolute_error,
     mean_absolute_percentage_error,
     mean_squared_error,
     r2_score,
-    roc_auc_score,
-    roc_curve,
 )
-from sklearn.preprocessing import label_binarize
+
+# Re-export task-specific plots for backward compatibility
+from lstm.classification.plots import plot_confusion_matrix, plot_roc_auc
+from lstm.regression.plots import plot_scatter, plot_timeseries
 
 sns.set_theme(style="darkgrid")
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "metrics",
+    "plot_analysis",
+    "plot_confusion_matrix",
+    "plot_roc_auc",
+    "plot_scatter",
+    "plot_timeseries",
+]
+
 
 def metrics(original, forecast):
-    """
-    Returns the metrics for the forecasted data
-    """
+    """Returns the metrics for the forecasted data."""
     mse = mean_squared_error(original, forecast)
     mae = mean_absolute_error(original, forecast)
     r2 = r2_score(original, forecast)
@@ -39,107 +50,40 @@ def metrics(original, forecast):
     }
 
 
-def plot_scatter(original, forecast, save_to):
-    """
-    Plots a scatter plot of the forecast against the original data with metrics
-    this is useful for visualizing the performance of the model
-    it uses seaborn to plot the scatter plot with a regression line
-    """
+def plot_analysis(data: pd.DataFrame, features, target, save_to):
+    save_to.mkdir(parents=True, exist_ok=True)
 
-    mse = mean_squared_error(original, forecast)
-    mae = mean_absolute_error(original, forecast)
-    r2 = r2_score(original, forecast)
-    mape = mean_absolute_percentage_error(original, forecast)
-    rmse = np.sqrt(mse)
-    logger.info("Best trial R2 %s", r2)
-    logger.info("Best trial MSE: %s", mse)
-    logger.info("Best trial RMSE: %s", rmse)
-    logger.info("Best trial MAE: %s", mae)
-    logger.info("Best trial MAPE: %s", mape)
-
-    hstack = np.hstack((original, forecast))
-    logger.info("Hstack %s", hstack.shape)
-
-    g = sns.jointplot(
-        x="Real",
-        y="Forecast",
-        data=pd.DataFrame(hstack, columns=["Real", "Forecast"]),
-        kind="reg",
-        truncate=False,
-        color="m",
-        height=7,
-    )
-
-    # Add metrics to the plot
-    plt.figtext(
-        0.15,
-        0.70,
-        f"R2: {r2:.2f}\nMSE: {mse:.2f}\nMAE: {mae:.2f}\nMAPE:{mape:.2f}",
-        bbox=dict(facecolor="white", alpha=0.5),
-        fontsize=12,
-    )
-
-    logger.info("Figure saved to %s", save_to)
-    g.figure.savefig(save_to)
-    plt.close(g.figure)
-
-
-def plot_timeseries(original, forecast, target: str, save_to):
-    fig, ax = plt.subplots(figsize=(30, 5))
-    ax.plot(original, label="Real")
-    ax.plot(forecast, label="Forecast")
-    ax.legend()
-    plt.title("Test Data Real vs Forecast")
-    plt.xlabel("Time")
-    plt.ylabel(target.capitalize())
-
-    logger.info("Figure saved to %s", save_to)
-    fig.savefig(save_to)
-    plt.close(fig)
-
-
-def plot_confusion_matrix(y_true, y_pred, save_path):
-    cm = confusion_matrix(y_true, y_pred)
-    plt.figure(figsize=(10, 7))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
-    plt.xlabel("Predicted")
-    plt.ylabel("True")
-    plt.title("Confusion Matrix")
-    plt.savefig(save_path)
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data[target], bins=50, kde=True)
+    plt.title(f"Distribution of {target}")
+    plt.xlabel(target)
+    plt.ylabel("Frequency")
+    plt.savefig(save_to / f"distribution_{target}.png")
     plt.close()
 
+    plt.figure(figsize=(12, 8))
+    sns.pairplot(data[features])
+    plt.title("Pairplot of Features and Target")
+    plt.savefig(save_to / "pairplot_features_target.png")
+    plt.close()
 
-def plot_roc_auc(all_labels, all_preds, quantiles, save_to):
-    try:
-        labels = list(range(quantiles))
-        if quantiles == 2:
-            all_labels_bin = np.vstack((all_labels == 0, all_labels == 1), dtype=int).T
-            all_preds_bin = np.vstack((all_preds == 0, all_preds == 1), dtype=int).T
-        else:
-            all_labels_bin = label_binarize(all_labels, classes=labels)
-            all_preds_bin = label_binarize(all_preds, classes=labels)
+    plt.figure(figsize=(10, 8))
+    correlation_matrix = data[features].corr()
+    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
+    plt.title("Correlation Heatmap")
+    plt.savefig(save_to / "correlation_heatmap.png")
+    plt.close()
 
-        fpr = dict()
-        tpr = dict()
-        roc_auc = dict()
-        for i in range(quantiles):
-            fpr[i], tpr[i], _ = roc_curve(all_labels_bin[:, i], all_preds_bin[:, i])
-            roc_auc[i] = roc_auc_score(all_labels_bin[:, i], all_preds_bin[:, i])
+    plt.figure(figsize=(10, 8))
+    spearman_corr = data[features].corr(method="spearman")
+    sns.heatmap(spearman_corr, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
+    plt.title("Spearman Correlation Heatmap")
+    plt.savefig(save_to / "spearman_correlation_heatmap.png")
+    plt.close()
 
-        # Plot ROC curve for each class
-        plt.figure(figsize=(8, 6))
-        colors = cycle(["blue", "red", "green"])
-        for i, color in zip(range(quantiles), colors):
-            plt.plot(fpr[i], tpr[i], color=color, lw=2, label=f"Class {i} (area = {roc_auc[i]:0.2f})")
-
-        plt.plot([0, 1], [0, 1], "k--", lw=2)  # Diagonal line
-        plt.xlim([0.0, 1.0])
-        plt.ylim([0.0, 1.05])
-        plt.xlabel("False Positive Rate")
-        plt.ylabel("True Positive Rate")
-        plt.title(f"ROC AUC Curve for {quantiles} classes")
-        plt.legend(loc="lower right")
-        plt.gcf().savefig(save_to)
-        plt.close()
-    except Exception:
-        logger.exception("Error plotting ROC AUC curve")
+    plt.figure(figsize=(10, 8))
+    kendall_corr = data[features].corr(method="kendall")
+    sns.heatmap(kendall_corr, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
+    plt.title("Kendall Correlation Heatmap")
+    plt.savefig(save_to / "kendall_correlation_heatmap.png")
+    plt.close()

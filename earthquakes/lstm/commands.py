@@ -5,21 +5,32 @@ from pathlib import Path
 import click
 import ray
 from ray import tune
-from ray.train import RunConfig
-from ray.tune import ResultGrid
+from ray.tune import ResultGrid, RunConfig
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
 from data.data import EarthquakeData
 from data.grid import Grid
 from data.usgs import USGS
 from lstm import utils
-
-from .classification import ClassificationTrainable as Trainable
+from lstm.classification import ClassificationTrainable
+from lstm.regression import RegressionTrainable
 
 logger = logging.getLogger(__name__)
 
+TASK_TRAINABLES = {
+    "classification": ClassificationTrainable,
+    "regression": RegressionTrainable,
+}
 
-def save_experiment_df(results: ResultGrid, metric, mode, qdata: EarthquakeData, networkx=False):
+
+def save_experiment_df(
+    results: ResultGrid,
+    metric: str,
+    mode: str,
+    qdata: EarthquakeData,
+    task: str = "classification",
+    networkx: bool = False,
+):
     results_df = results.get_dataframe()
     results_df = results_df.sort_values(by=metric, ascending=(mode == "min"))
     print(results_df.columns)
@@ -28,7 +39,7 @@ def save_experiment_df(results: ResultGrid, metric, mode, qdata: EarthquakeData,
         return f"{x:.3f}" if isinstance(x, float) else x
 
     results_df = results_df.apply(lambda col: col.map(_fmt) if col.dtype.kind == "f" else col)
-    extra_columns = ["accuracy", "config/quantiles"]
+    extra_columns = ["accuracy", "config/quantiles"] if task == "classification" else []
 
     if networkx:
         extra_columns += [
@@ -83,7 +94,8 @@ def save_experiment_df(results: ResultGrid, metric, mode, qdata: EarthquakeData,
 @click.option("--mode", type=str, help="mode", default="min")
 @click.option("--networkx", type=bool, help="mode", default=False)
 @click.option("--node-size", type=int, help="size of node in kms", default=100)
-@click.option("--quantiles", type=int, help="number of categories", default=2)
+@click.option("--quantiles", type=int, help="number of categories (classification only)", default=2)
+@click.option("--task", type=click.Choice(["classification", "regression"]), default="classification")
 @click.option("-s", "--samples", type=int, help="samples", default=-1)
 @click.option("-resume", "--resume", type=bool, help="resume experiment", default=False)
 @click.option("-ex", "--experiment", type=str, help="resume experiment path", default=None)
@@ -103,19 +115,21 @@ def tune_command(
     networkx: bool,
     node_size: int,
     quantiles: int,
-    samples,
-    resume,
-    experiment,
-    cpus,
-    gpus,
+    task: str,
+    samples: int,
+    resume: bool,
+    experiment: str | None,
+    cpus: int,
+    gpus: int,
 ):
     """
-    Reads a processed .csv catalog and trains an LSTM neural network
+    Reads a processed .csv catalog and trains an LSTM neural network.
 
-    quakes lstm tune --quantiles 2 --samples 1 --metric accuracy --mode max
-    quakes lstm tune ... -ex ~/ray_results/ClassificationTrainable_2024-11-28_13-08-36
-    quakes lstm tune ... --networkx
-    quakes lstm tune --quantiles 2 --samples 10 --metric accuracy --mode max
+    Examples:
+      quakes lstm tune --task classification --quantiles 2 --samples 1 --metric accuracy --mode max
+      quakes lstm tune --task regression --samples 1 --metric mean_test_loss --mode min
+      quakes lstm tune ... -ex ~/ray_results/ClassificationTrainable_2024-11-28_13-08-36
+      quakes lstm tune ... --networkx
     """
     logger.info("Downloading data...")
     latitude = (min_lat, max_lat)
@@ -142,9 +156,11 @@ def tune_command(
     logger.info("Processing data...")
     utils.plot_analysis(qdata.data, features, target, Path.cwd() / "plots" / qdata.hash)
 
-    logger.info("Tuning with metric %s mode: %s", metric, mode)
+    trainable_cls = TASK_TRAINABLES[task]
+    run_name = trainable_cls.__name__
+    logger.info("Tuning with metric %s mode: %s (task=%s)", metric, mode, task)
     scheduler = ASHAScheduler(metric=metric, mode=mode, grace_period=1, reduction_factor=2)
-    trainable = tune.with_parameters(Trainable, qdata=qdata)
+    trainable = tune.with_parameters(trainable_cls, qdata=qdata)
     trainable = tune.with_resources(trainable, resources={"cpu": cpus, "gpu": gpus})
     param_space = {
         "lookback": tune.randint(10, 150),
@@ -154,9 +170,10 @@ def tune_command(
         "lstm_layers": tune.randint(2, 10),
         "lr": tune.loguniform(1e-4, 1e-2),
         "max_epochs": tune.randint(10, 70),
-        "quantiles": quantiles,
         **param_space,
     }
+    if task == "classification":
+        param_space["quantiles"] = quantiles
 
     ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
     experiment_path = Path(experiment) if experiment else None
@@ -180,16 +197,16 @@ def tune_command(
                 num_samples=samples,
                 max_concurrent_trials=2,
             ),
-            run_config=RunConfig(name="ClassificationTrainable"),
+            run_config=RunConfig(name=run_name),
             param_space=param_space,
         )
 
     results = tuner.fit()
     logger.info("Results path at %s", results.experiment_path)
     best_result = results.get_best_result(metric, mode)
-    trainable: Trainable = tune.with_parameters(Trainable, qdata=qdata)(config=best_result.config)
+    trainable_instance = tune.with_parameters(trainable_cls, qdata=qdata)(config=best_result.config)
     try:
-        trainable.test_result(best_result, metric, mode)
+        trainable_instance.test_result(best_result, metric, mode)
     except Exception:
         logger.error("Error testing best result")
 
@@ -197,7 +214,7 @@ def tune_command(
     with open(Path(results.experiment_path) / "qdata.pkl", "wb") as f:
         pickle.dump(qdata, f)
 
-    save_experiment_df(results, metric, mode, qdata, networkx)
+    save_experiment_df(results, metric, mode, qdata, task, networkx)
 
 
 lstm_group = click.Group("lstm", help="tools to train and tune lstm models")

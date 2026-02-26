@@ -1,3 +1,10 @@
+# Use non-interactive backend before any matplotlib imports.
+# Prevents "RuntimeError: main thread is not in main loop" when Ray workers
+# create/close figures (tkinter cleanup fails in worker processes).
+import matplotlib
+
+matplotlib.use("Agg")
+
 import click
 
 from data.commands import usgs_group

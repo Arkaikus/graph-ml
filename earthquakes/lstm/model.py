@@ -1,10 +1,25 @@
+"""Base LSTM model for sequence-to-output prediction."""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+import torch
 import torch.nn as nn
 
+logger = logging.getLogger(__name__)
 
-# Define the LSTM model
-class LSTMModel(nn.Module):
+
+class BaseLSTMModel(nn.Module):
     """
-    LSTM Layers are a type of RNN
+    Base LSTM model for sequence-to-output prediction.
+
+    Input shape: (batch, seq_len, input_size)
+    - seq_len: number of features (each feature is a time series of length lookback)
+    - input_size: lookback (length of each feature's history)
+
+    Output shape: (batch, outputs)
 
     https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html
     """
@@ -15,40 +30,82 @@ class LSTMModel(nn.Module):
         outputs: int,
         hidden_size: int,
         num_layers: int,
+        *,
+        dropout: float = 0.0,
+        num_features: Optional[int] = None,
     ):
         """
-        Call LSTM layers take a (seq_size, lookback) tensor, and outputs a hidden_size tensor
-        for batch processing batch_first is enabled so we would process (batch, seq_size, lookback)
-
-
+        Args:
+            lookback: Length of each feature's history (LSTM input_size).
+            outputs: Number of output units (classes or regression targets).
+            hidden_size: LSTM hidden dimension.
+            num_layers: Number of stacked LSTM layers.
+            dropout: Dropout probability (applied between LSTM layers if num_layers > 1).
+            num_features: Number of feature sequences (seq_len). If provided, uses
+                explicit Linear for reproducibility; otherwise uses LazyLinear.
         """
         super().__init__()
-        # num_layers is the number of LSTM layers stacked on top of each other
-        # this would preferably be equivalent to the number of lookbacks
-        self.lstm = nn.LSTM(lookback, hidden_size, num_layers, batch_first=True)
-        self.flatten = nn.Flatten()  # flatten the output of the LSTM layer
-        # self.dense = nn.LazyLinear(lookback * hidden_size)
-        # self.dense1 = nn.LazyLinear(lookback)
-        self.linear = nn.LazyLinear(outputs)
+        if lookback < 1:
+            raise ValueError("lookback must be >= 1")
+        if outputs < 1:
+            raise ValueError("outputs must be >= 1")
+        if hidden_size < 1:
+            raise ValueError("hidden_size must be >= 1")
+        if num_layers < 1:
+            raise ValueError("num_layers must be >= 1")
+        if not 0 <= dropout < 1:
+            raise ValueError("dropout must be in [0, 1)")
 
-    def forward(self, batch_input):
-        # batch input is (batch_size, sequence, lookback)
-        # where: lookback is the length i.e number of features in a sequence
-        #        sequence is feature sequence, i.e seq 1 = [latitude t0, latitude t1, ..., latitude tN]
-        out, _ = self.lstm(batch_input)
+        self.lookback = lookback
+        self.outputs = outputs
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.num_features = num_features
 
-        # this will turn (batch_size, sequence, hidden_size) into (batch_size, sequence * hidden_size)
-        # leaving a W*x + b operation to be done by the linear layer with all of the hidden states
-        flatten = self.flatten(out)
-        # dense = nn.functional.sigmoid(self.dense(flatten))
-        # dense = nn.functional.sigmoid(self.dense1(dense))
-        # return is (batch_size, 1)
-        return self.linear(flatten)
+        self.lstm = nn.LSTM(
+            lookback,
+            hidden_size,
+            num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        self.flatten = nn.Flatten()
+
+        if num_features is not None:
+            self.linear = nn.Linear(num_features * hidden_size, outputs)
+        else:
+            self.linear = nn.LazyLinear(outputs)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: (batch, seq_len, lookback)
+
+        Returns:
+            (batch, outputs)
+        """
+        if x.dim() != 3:
+            raise ValueError(f"Expected 3D input (batch, seq, lookback), got {x.dim()}D")
+        if x.size(2) != self.lookback:
+            raise ValueError(
+                f"Input last dim {x.size(2)} != lookback {self.lookback}"
+            )
+
+        out, _ = self.lstm(x)
+        flat = self.flatten(out)
+        return self.linear(flat)
 
     @classmethod
-    def from_config(cls, config: dict):
+    def from_config(cls, config: dict) -> BaseLSTMModel:
         return cls(
-            config["lookback"],
-            config["hidden_size"],
-            config["num_layers"],
+            lookback=config["lookback"],
+            outputs=config["outputs"],
+            hidden_size=config["hidden_size"],
+            num_layers=config["num_layers"],
+            dropout=config.get("dropout", 0.0),
+            num_features=config.get("num_features"),
         )
+
+
+# Backward compatibility alias
+LSTMModel = BaseLSTMModel
