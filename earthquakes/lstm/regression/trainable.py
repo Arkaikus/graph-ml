@@ -7,12 +7,11 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from ray.air import Result
-from torchmetrics.regression import MeanAbsolutePercentageError
-
 from lstm.model import LSTMModel
 from lstm.regression.plots import plot_scatter, plot_timeseries
 from lstm.trainable.base import BaseLSTMTrainable
+from ray.air import Result
+from torchmetrics.regression import MeanAbsolutePercentageError
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +74,8 @@ class RegressionTrainable(BaseLSTMTrainable):
         """Return (y_train, train_pred, y_test, test_pred) as numpy arrays."""
         self.model.eval()
         with torch.no_grad():
-            train_output = [
-                self.model(x.to(self.device)) for x, _ in self.train_loader
-            ]
-            test_output = [
-                self.model(x.to(self.device)) for x, _ in self.test_loader
-            ]
+            train_output = [self.model(x.to(self.device)) for x, _ in self.train_loader]
+            test_output = [self.model(x.to(self.device)) for x, _ in self.test_loader]
             train_output = torch.cat(train_output, dim=0).detach().cpu().numpy()
             test_output = torch.cat(test_output, dim=0).detach().cpu().numpy()
 
@@ -126,6 +121,4 @@ class RegressionTrainable(BaseLSTMTrainable):
                 save_to / f"{target}_test_timeseries.png",
             )
 
-        result.metrics_dataframe[["loss", "test_loss"]].plot(
-            legend=True
-        ).get_figure().savefig(save_to / "loss.png")
+        result.metrics_dataframe[["loss", "test_loss"]].plot(legend=True).get_figure().savefig(save_to / "loss.png")

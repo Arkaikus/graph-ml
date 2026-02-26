@@ -5,16 +5,15 @@ from pathlib import Path
 
 import click
 import ray
-from ray import tune
-from ray.tune import ResultGrid, RunConfig
-from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
-
 from data.data import EarthquakeData
 from data.grid import Grid
 from data.usgs import USGS
 from lstm import utils
 from lstm.classification import ClassificationTrainable
 from lstm.regression import RegressionTrainable
+from ray import tune
+from ray.tune import ResultGrid, RunConfig
+from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +32,10 @@ def save_experiment_df(
     networkx: bool = False,
 ):
     results_df = results.get_dataframe()
-    sort_by = metric if metric in results_df.columns else (
-        "test_loss" if "test_loss" in results_df.columns else results_df.columns[0]
+    sort_by = (
+        metric
+        if metric in results_df.columns
+        else ("test_loss" if "test_loss" in results_df.columns else results_df.columns[0])
     )
     results_df = results_df.sort_values(by=sort_by, ascending=(mode == "min"))
     print(results_df.columns)

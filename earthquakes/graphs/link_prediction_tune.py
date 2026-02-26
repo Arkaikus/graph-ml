@@ -13,6 +13,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from data.store import Store
 from gensim.models import Word2Vec
 from node2vec import Node2Vec
 from node2vec.edges import HadamardEmbedder
@@ -23,8 +24,6 @@ from ray.tune.schedulers import ASHAScheduler
 from sklearn import metrics
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, roc_curve
 from torch.utils.data import DataLoader, TensorDataset
-
-from data.store import Store
 
 from .edge_splitter import EdgeSplitter
 from .model import SimpleNN

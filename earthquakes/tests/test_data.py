@@ -1,7 +1,6 @@
 """Tests for EarthquakeData.clean and related data layer."""
 
 import pandas as pd
-
 from data.data import EarthquakeData
 from data.hash import Hashable, _serialize_for_hash
 

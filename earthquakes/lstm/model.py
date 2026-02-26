@@ -7,7 +7,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch.nn import functional
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,11 @@ class SequenceAttention(nn.Module):
 
     def forward(self, lstm_out: torch.Tensor) -> torch.Tensor:
         # lstm_out: (batch, seq_len, hidden_size)
-        weights = F.softmax(self.attention(lstm_out), dim=1)
+        weights = functional.softmax(self.attention(lstm_out), dim=1)
         return (weights * lstm_out).sum(dim=1)
 
 
-class BaseLSTMModel(nn.Module):
+class LSTMModel(nn.Module):
     """
     Base LSTM model for sequence-to-output prediction.
 
@@ -107,9 +107,7 @@ class BaseLSTMModel(nn.Module):
         if x.dim() != 3:
             raise ValueError(f"Expected 3D input (batch, seq, lookback), got {x.dim()}D")
         if x.size(2) != self.lookback:
-            raise ValueError(
-                f"Input last dim {x.size(2)} != lookback {self.lookback}"
-            )
+            raise ValueError(f"Input last dim {x.size(2)} != lookback {self.lookback}")
 
         out, _ = self.lstm(x)
         if self.attention is not None:
@@ -119,7 +117,7 @@ class BaseLSTMModel(nn.Module):
         return self.linear(agg)
 
     @classmethod
-    def from_config(cls, config: dict) -> BaseLSTMModel:
+    def from_config(cls, config: dict) -> LSTMModel:
         return cls(
             lookback=config["lookback"],
             outputs=config["outputs"],
@@ -129,7 +127,3 @@ class BaseLSTMModel(nn.Module):
             num_features=config.get("num_features"),
             use_attention=config.get("use_attention", False),
         )
-
-
-# Backward compatibility alias
-LSTMModel = BaseLSTMModel

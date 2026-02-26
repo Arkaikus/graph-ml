@@ -2,7 +2,7 @@
 
 import pytest
 
-from validation import GridConfig, QuakesConfig, USGSQueryParams, _parse_tuple
+from earthquakes.validation import GridConfig, QuakesConfig, USGSQueryParams, _parse_tuple
 
 
 def test_parse_tuple_string():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from torch.nn import functional
 
 
 class FocalLoss(nn.Module):
@@ -17,7 +17,7 @@ class FocalLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        ce = F.cross_entropy(logits, targets.long(), reduction="none")
+        ce = functional.cross_entropy(logits, targets.long(), reduction="none")
         pt = torch.exp(-ce)
         focal = (1 - pt) ** self.gamma * ce
         if self.alpha is not None:
@@ -40,7 +40,7 @@ class LabelSmoothingCrossEntropy(nn.Module):
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         n_classes = logits.size(-1)
-        log_probs = F.log_softmax(logits, dim=-1)
+        log_probs = functional.log_softmax(logits, dim=-1)
         with torch.no_grad():
             smooth_targets = torch.zeros_like(log_probs).fill_(self.smoothing / (n_classes - 1))
             smooth_targets.scatter_(1, targets.unsqueeze(1).long(), 1.0 - self.smoothing)

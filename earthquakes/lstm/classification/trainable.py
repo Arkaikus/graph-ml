@@ -12,14 +12,13 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from ray.air import Result
-from sklearn import metrics
-from torch.utils.data import DataLoader
-
 from lstm.classification.losses import FocalLoss, LabelSmoothingCrossEntropy
 from lstm.classification.plots import plot_confusion_matrix, plot_roc_auc
 from lstm.model import LSTMModel
 from lstm.trainable.base import BaseLSTMTrainable
+from ray.air import Result
+from sklearn import metrics
+from torch.utils.data import DataLoader
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +116,7 @@ class ClassificationTrainable(BaseLSTMTrainable):
         plot_roc_auc(train_y, train_pred, self.quantiles, save_to / "roc_auc_train.png")
         plot_roc_auc(test_y, test_pred, self.quantiles, save_to / "roc_auc.png")
 
-        self.binned[f"{self.target}_binned"].plot(
-            kind="hist", title="Target binned", sharex=True
-        )
+        self.binned[f"{self.target}_binned"].plot(kind="hist", title="Target binned", sharex=True)
         plt.gcf().savefig(save_to / f"{self.target}_binned.png")
 
         json.dump(

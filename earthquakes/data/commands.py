@@ -1,5 +1,4 @@
 import click
-
 from data.usgs import USGS
 from settings import read_coordinates
 

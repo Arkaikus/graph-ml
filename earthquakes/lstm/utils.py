@@ -2,7 +2,6 @@ import logging
 from pathlib import Path
 
 import click
-
 from lstm.plot import plot_analysis
 
 logger = logging.getLogger(__name__)

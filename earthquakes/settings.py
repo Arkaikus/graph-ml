@@ -2,7 +2,6 @@ import logging
 import os
 
 from dotenv import load_dotenv
-
 from validation import QuakesConfig
 
 logging.basicConfig(level=logging.INFO)

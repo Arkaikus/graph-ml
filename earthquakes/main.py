@@ -7,9 +7,9 @@ matplotlib.use("Agg")
 
 import click
 
-from data.commands import usgs_group
-from graphs.commands import graphs_group
-from lstm.commands import lstm_group
+from earthquakes.data.commands import usgs_group
+from earthquakes.graphs.commands import graphs_group
+from earthquakes.lstm.commands import lstm_group
 
 
 def main():

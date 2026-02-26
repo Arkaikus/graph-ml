@@ -6,12 +6,11 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
-from ray import tune
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from ray.train import Checkpoint
-from torch.utils.data import DataLoader, TensorDataset
-
 from data.data import EarthquakeData
+from ray import tune
+from ray.train import Checkpoint
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import DataLoader, TensorDataset
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +77,7 @@ class BaseLSTMTrainable(tune.Trainable, ABC):
 
     def post_init(self) -> None:
         """Override for subclass-specific initialization. Base sets up LR scheduler."""
-        self.scheduler = ReduceLROnPlateau(
-            self.optimizer, mode="min", factor=0.5, patience=2
-        )
+        self.scheduler = ReduceLROnPlateau(self.optimizer, mode="min", factor=0.5, patience=2)
 
     def prepare_target_for_loss(self, target_batch: torch.Tensor) -> torch.Tensor:
         """Transform target for criterion. Override for classification (e.g. view(-1))."""
@@ -193,8 +190,6 @@ class BaseLSTMTrainable(tune.Trainable, ABC):
         self.logger.info("Loading checkpoint %s", checkpoint)
         with checkpoint.as_directory() as loaded_checkpoint_dir:
             checkpoint_path = os.path.join(loaded_checkpoint_dir, "checkpoint.pth")
-            model_state, optimizer_state = torch.load(
-                checkpoint_path, map_location=torch.device("cpu")
-            )
+            model_state, optimizer_state = torch.load(checkpoint_path, map_location=torch.device("cpu"))
             self.model.load_state_dict(model_state)
             self.optimizer.load_state_dict(optimizer_state)

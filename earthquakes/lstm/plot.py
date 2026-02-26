@@ -9,16 +9,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+# Re-export task-specific plots for backward compatibility
+from lstm.classification.plots import plot_confusion_matrix, plot_roc_auc
+from lstm.regression.plots import plot_scatter, plot_timeseries
 from sklearn.metrics import (
     mean_absolute_error,
     mean_absolute_percentage_error,
     mean_squared_error,
     r2_score,
 )
-
-# Re-export task-specific plots for backward compatibility
-from lstm.classification.plots import plot_confusion_matrix, plot_roc_auc
-from lstm.regression.plots import plot_scatter, plot_timeseries
 
 sns.set_theme(style="darkgrid")
 

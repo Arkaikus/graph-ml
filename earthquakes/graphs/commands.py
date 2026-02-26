@@ -3,7 +3,6 @@ from pathlib import Path
 
 import click
 import pandas as pd
-
 from data.data import EarthquakeData
 from data.grid import Grid
 from settings import read_coordinates

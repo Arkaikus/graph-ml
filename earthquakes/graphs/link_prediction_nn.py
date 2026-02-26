@@ -7,14 +7,13 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from data.store import Store
 from gensim.models import Word2Vec
 from node2vec import Node2Vec
 from node2vec.edges import HadamardEmbedder
 from sklearn import metrics
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
-
-from data.store import Store
 
 from .edge_splitter import EdgeSplitter
 from .model import SimpleNN

@@ -1,7 +1,6 @@
 """Tests for Grid (with GridConfig validation)."""
 
 import pytest
-
 from data.grid import Grid
 
 

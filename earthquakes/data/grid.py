@@ -1,7 +1,6 @@
 import geopy
 import geopy.distance as gpd
 import pandas as pd
-
 from validation import GridConfig
 
 from .hash import Hashable
