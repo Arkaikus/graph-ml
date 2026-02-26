@@ -1,10 +1,7 @@
 """
 Pydantic models for config and data validation.
-Load from env + CLI overrides for coordinates, paths, and run options.
+QuakesConfig: latitude/longitude bounds (used from env + CLI overrides).
 """
-
-from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -41,8 +38,8 @@ class CoordinateBounds(BaseModel):
         return cls(min_val=min(a, b), max_val=max(a, b))
 
 
-class RunConfig(BaseModel):
-    """Validated run config: coordinates, output dir, seed."""
+class QuakesConfig(BaseModel):
+    """Validated run config: latitude and longitude bounds only."""
 
     latitude: tuple[float, float] = Field(
         ...,
@@ -52,12 +49,12 @@ class RunConfig(BaseModel):
         ...,
         description="(min_longitude, max_longitude)",
     )
-    output_dir: Path = Field(default=Path("plots"), description="Base output directory")
-    seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
 
     @field_validator("latitude", "longitude", mode="before")
     @classmethod
     def coerce_bounds(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return (0.0, 0.0)
         if isinstance(v, (list, tuple)) and len(v) == 2:
             a, b = float(v[0]), float(v[1])
             return (min(a, b), max(a, b))

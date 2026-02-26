@@ -1,10 +1,8 @@
 """Tests for Pydantic config models."""
 
-from pathlib import Path
-
 import pytest
 
-from validation import GridConfig, RunConfig, USGSQueryParams, _parse_tuple
+from validation import GridConfig, QuakesConfig, USGSQueryParams, _parse_tuple
 
 
 def test_parse_tuple_string():
@@ -27,15 +25,13 @@ def test_parse_tuple_invalid():
 
 
 def test_run_config():
-    cfg = RunConfig(latitude=(-0.132, 9.796), longitude=(-80.343, -72.466))
+    cfg = QuakesConfig(latitude=(-0.132, 9.796), longitude=(-80.343, -72.466))
     assert cfg.latitude == (-0.132, 9.796)
     assert cfg.longitude == (-80.343, -72.466)
-    assert cfg.output_dir == Path("plots")
-    assert cfg.seed is None
 
 
 def test_run_config_coerce_bounds():
-    cfg = RunConfig(latitude="1,2", longitude="3,4")
+    cfg = QuakesConfig(latitude="1,2", longitude="3,4")
     assert cfg.latitude == (1.0, 2.0)
     assert cfg.longitude == (3.0, 4.0)
 
