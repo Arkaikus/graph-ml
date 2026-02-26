@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 from ray import tune
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from ray.train import Checkpoint
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -33,7 +34,6 @@ class BaseLSTMTrainable(tune.Trainable, ABC):
         self.lstm_layers = config.get("lstm_layers", 2)
         self.learning_rate = config.get("lr", 0.001)
         self.max_epochs = config.get("max_epochs", 100)
-        self.shuffle = config.get("shuffle", False)
         self.epoch = 0
         self.patience = 5
         self.best_loss = np.inf
@@ -49,26 +49,38 @@ class BaseLSTMTrainable(tune.Trainable, ABC):
         """Prepare data. Must set self.x_train, self.x_test, self.y_train, self.y_test."""
 
     def setup_loaders(self) -> None:
-        """Create DataLoaders from x_train, x_test, y_train, y_test."""
+        """Create DataLoaders from x_train, x_test, y_train, y_test (and x_val, y_val if present)."""
         self.train_dataset = TensorDataset(self.x_train, self.y_train)
         self.test_dataset = TensorDataset(self.x_test, self.y_test)
         self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=self.shuffle,
+            shuffle=False,  # earthquake data is temporal
         )
         self.test_loader = DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
-            shuffle=self.shuffle,
+            shuffle=False,
         )
+        if hasattr(self, "x_val") and self.x_val is not None:
+            self.val_dataset = TensorDataset(self.x_val, self.y_val)
+            self.val_loader = DataLoader(
+                self.val_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+            )
+        else:
+            self.val_loader = self.train_loader
 
     @abstractmethod
     def setup_model(self) -> None:
         """Create model, criterion, optimizer. Must set self.model, self.criterion, self.optimizer."""
 
     def post_init(self) -> None:
-        """Override for subclass-specific initialization."""
+        """Override for subclass-specific initialization. Base sets up LR scheduler."""
+        self.scheduler = ReduceLROnPlateau(
+            self.optimizer, mode="min", factor=0.5, patience=2
+        )
 
     def prepare_target_for_loss(self, target_batch: torch.Tensor) -> torch.Tensor:
         """Transform target for criterion. Override for classification (e.g. view(-1))."""
@@ -85,6 +97,7 @@ class BaseLSTMTrainable(tune.Trainable, ABC):
         target = self.prepare_target_for_loss(output_batch).to(self.device)
         loss = self.criterion(output, target)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
         return loss.item(), self.batch_metrics(output, target)
 
@@ -140,22 +153,26 @@ class BaseLSTMTrainable(tune.Trainable, ABC):
         """One training step. Returns combined metrics for Ray Tune."""
         self.epoch += 1
         epoch_metrics = self.train_epoch()
+        val_metrics = self.eval(self.val_loader)
         eval_metrics = self.eval(self.test_loader)
-        self.done = self.is_done(epoch_metrics["mean_loss"])
+        val_loss = val_metrics["mean_test_loss"]
+        self.scheduler.step(val_loss)
+        self.done = self.is_done(val_loss)
         metrics = {
             "checkpoint_dir_name": "",
             "patience": self.patience,
             "done": self.done,
+            "val_loss": val_loss,
             **epoch_metrics,
             **eval_metrics,
         }
-        logger.info("epoch metrics: %s eval_metrics: %s", epoch_metrics, eval_metrics)
+        logger.info("epoch metrics: %s val_metrics: %s eval_metrics: %s", epoch_metrics, val_metrics, eval_metrics)
         return metrics
 
-    def is_done(self, epoch_loss: float) -> bool:
-        """Early stopping and max epochs."""
-        if epoch_loss < self.best_loss:
-            self.best_loss = epoch_loss
+    def is_done(self, val_loss: float) -> bool:
+        """Early stopping and max epochs. Uses val loss when validation set exists."""
+        if val_loss < self.best_loss:
+            self.best_loss = val_loss
             self.patience = min(self.patience + 1, 10)
         elif not self.done:
             self.patience -= 1

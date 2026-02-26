@@ -1,5 +1,6 @@
 import logging
 import pickle
+import sys
 from pathlib import Path
 
 import click
@@ -32,14 +33,17 @@ def save_experiment_df(
     networkx: bool = False,
 ):
     results_df = results.get_dataframe()
-    results_df = results_df.sort_values(by=metric, ascending=(mode == "min"))
+    sort_by = metric if metric in results_df.columns else (
+        "test_loss" if "test_loss" in results_df.columns else results_df.columns[0]
+    )
+    results_df = results_df.sort_values(by=sort_by, ascending=(mode == "min"))
     print(results_df.columns)
 
     def _fmt(x):
         return f"{x:.3f}" if isinstance(x, float) else x
 
     results_df = results_df.apply(lambda col: col.map(_fmt) if col.dtype.kind == "f" else col)
-    extra_columns = ["accuracy", "config/quantiles"] if task == "classification" else []
+    extra_columns = ["accuracy", "config/quantiles", "config/loss_type"] if task == "classification" else []
 
     if networkx:
         extra_columns += [
@@ -48,21 +52,28 @@ def save_experiment_df(
             "config/node_size",
         ]
 
-    results_df = results_df[
-        [
-            "loss",
-            "mean_loss",
-            "test_loss",
-            "config/lookback",
-            "config/test_size",
-            "config/batch_size",
-            "config/hidden_size",
-            "config/lstm_layers",
-            "config/lr",
-            "config/max_epochs",
-        ]
-        + extra_columns
-    ].rename(columns={c: c.replace("config/", "").replace("_", " ") for c in results_df.columns})
+    base_cols = [
+        "loss",
+        "mean_loss",
+        "test_loss",
+        "config/lookback",
+        "config/test_size",
+        "config/batch_size",
+        "config/hidden_size",
+        "config/lstm_layers",
+        "config/lr",
+        "config/max_epochs",
+        "config/dropout",
+    ]
+    select_cols = [c for c in base_cols + extra_columns if c in results_df.columns]
+    results_df = results_df[select_cols].rename(
+        columns={c: c.replace("config/", "").replace("_", " ") for c in results_df.columns}
+    )
+    # Format network_features when it's a list
+    if "network features" in results_df.columns:
+        results_df["network features"] = results_df["network features"].apply(
+            lambda x: ",".join(x) if isinstance(x, (list, tuple)) else x
+        )
     latex_table = results_df.to_latex(index=False)
     save_to = Path.cwd() / "plots" / qdata.hash
     save_to.mkdir(parents=True, exist_ok=True)
@@ -92,7 +103,7 @@ def save_experiment_df(
 @click.option("--max-mag", type=float, help="max magnitude", default=10)
 @click.option("--metric", type=str, help="metric", default="test_loss")
 @click.option("--mode", type=str, help="mode", default="min")
-@click.option("--networkx", type=bool, help="mode", default=False)
+@click.option("--networkx", is_flag=True, help="mode")
 @click.option("--node-size", type=int, help="size of node in kms", default=100)
 @click.option("--quantiles", type=int, help="number of categories (classification only)", default=2)
 @click.option("--task", type=click.Choice(["classification", "regression"]), default="classification")
@@ -147,7 +158,7 @@ def tune_command(
             "closeness_centrality",
             "pagerank",
         ]
-        param_space["network_features"] = tune.grid_search(nx_features)
+        param_space["network_features"] = nx_features  # all features at once
         param_space["network_lookback"] = tune.randint(1, 10)
         param_space["node_size"] = node_size
 
@@ -170,12 +181,24 @@ def tune_command(
         "lstm_layers": tune.randint(2, 10),
         "lr": tune.loguniform(1e-4, 1e-2),
         "max_epochs": tune.randint(10, 70),
+        "dropout": tune.uniform(0.0, 0.3),
+        "use_attention": tune.choice([False, True]),
         **param_space,
     }
     if task == "classification":
         param_space["quantiles"] = quantiles
+        param_space["loss_type"] = tune.choice(["cross_entropy", "focal", "label_smoothing"])
 
-    ray.init(dashboard_host="0.0.0.0", ignore_reinit_error=True)
+    ray_temp = Path.home() / ".cache" / "ray" / "tmp"
+    ray_temp.mkdir(parents=True, exist_ok=True)
+    # Use driver's Python/venv so workers reuse the same .venv instead of creating new ones
+    runtime_env = {"py_executable": sys.executable, "env_vars": {"RAY_DISABLE_UV_RUNTIME_ENV": "1"}}
+    ray.init(
+        dashboard_host="0.0.0.0",
+        ignore_reinit_error=True,
+        _temp_dir=str(ray_temp),
+        runtime_env=runtime_env,
+    )
     experiment_path = Path(experiment) if experiment else None
     if resume and not experiment_path:
         experiment_path = utils.prompt_experiment()

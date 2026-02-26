@@ -7,8 +7,22 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
+
+
+class SequenceAttention(nn.Module):
+    """Attention over LSTM sequence output to weight timesteps by relevance."""
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.attention = nn.Linear(hidden_size, 1)
+
+    def forward(self, lstm_out: torch.Tensor) -> torch.Tensor:
+        # lstm_out: (batch, seq_len, hidden_size)
+        weights = F.softmax(self.attention(lstm_out), dim=1)
+        return (weights * lstm_out).sum(dim=1)
 
 
 class BaseLSTMModel(nn.Module):
@@ -33,6 +47,7 @@ class BaseLSTMModel(nn.Module):
         *,
         dropout: float = 0.0,
         num_features: Optional[int] = None,
+        use_attention: bool = False,
     ):
         """
         Args:
@@ -61,6 +76,7 @@ class BaseLSTMModel(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_features = num_features
+        self.use_attention = use_attention
 
         self.lstm = nn.LSTM(
             lookback,
@@ -69,12 +85,16 @@ class BaseLSTMModel(nn.Module):
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
-        self.flatten = nn.Flatten()
-
-        if num_features is not None:
-            self.linear = nn.Linear(num_features * hidden_size, outputs)
+        if use_attention:
+            self.attention = SequenceAttention(hidden_size)
+            self.linear = nn.Linear(hidden_size, outputs)
         else:
-            self.linear = nn.LazyLinear(outputs)
+            self.attention = None
+            self.flatten = nn.Flatten()
+            if num_features is not None:
+                self.linear = nn.Linear(num_features * hidden_size, outputs)
+            else:
+                self.linear = nn.LazyLinear(outputs)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -92,8 +112,11 @@ class BaseLSTMModel(nn.Module):
             )
 
         out, _ = self.lstm(x)
-        flat = self.flatten(out)
-        return self.linear(flat)
+        if self.attention is not None:
+            agg = self.attention(out)
+        else:
+            agg = self.flatten(out)
+        return self.linear(agg)
 
     @classmethod
     def from_config(cls, config: dict) -> BaseLSTMModel:
@@ -104,6 +127,7 @@ class BaseLSTMModel(nn.Module):
             num_layers=config["num_layers"],
             dropout=config.get("dropout", 0.0),
             num_features=config.get("num_features"),
+            use_attention=config.get("use_attention", False),
         )
 
 

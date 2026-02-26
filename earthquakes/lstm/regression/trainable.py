@@ -22,25 +22,43 @@ class RegressionTrainable(BaseLSTMTrainable):
 
     def setup_data(self) -> None:
         assert self.lookback, "[lookback] cannot be None"
+        network_features = self.config.get("network_features", [])
+        network_lookback = self.config.get("network_lookback", 5)
         sequences, targets = self.qdata.to_sequences(
-            self.qdata.normalized_data, self.lookback
+            self.qdata.normalized_data,
+            self.lookback,
+            network_features=network_features,
+            network_lookback=network_lookback,
         )
-        x_train, x_test, y_train, y_test = self.qdata.split(
-            sequences, targets, self.test_size
+        x_train, x_test, y_train, y_test, x_val, y_val = self.qdata.split(
+            sequences,
+            targets,
+            self.test_size,
+            shuffle=False,
+            temporal=True,
+            val_ratio=self.config.get("val_ratio", 0.15),
         )
         self.x_train = x_train
         self.x_test = x_test
+        self.x_val = x_val
         self.y_train = y_train[:, -1]
         self.y_test = y_test[:, -1]
+        self.y_val = y_val[:, -1]
 
     def setup_model(self) -> None:
-        num_features = len(self.qdata.features)
+        # Use actual sequence dimension; len(qdata.features) can diverge when network
+        # features are added in to_sequences.
+        num_features = self.x_train.size(1)
+        dropout = self.config.get("dropout", 0.0)
+        use_attention = self.config.get("use_attention", False)
         self.model = LSTMModel(
             lookback=self.lookback,
             outputs=len(self.qdata.targets),
             hidden_size=self.hidden_size,
             num_layers=self.lstm_layers,
             num_features=num_features,
+            dropout=dropout,
+            use_attention=use_attention,
         ).to(self.device)
         loss_types = {
             "mse": nn.MSELoss,

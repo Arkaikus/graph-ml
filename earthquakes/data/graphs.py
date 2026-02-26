@@ -1,5 +1,6 @@
 from functools import partial
 
+import numpy as np
 import networkx as nx
 import pandas as pd
 
@@ -19,14 +20,16 @@ def nodes2graph(nodes, max_nodes, max_prev=5) -> nx.Graph:
     directed : boolean, default=True
     """
     graph = nx.Graph()
+    nodes = np.asarray(nodes, dtype=np.int64).flatten()
 
     graph.add_nodes_from(range(max_nodes))
     for i in range(nodes.shape[0] - 1):
         end = i + 1
         start = max(end - max_prev, 0)
         nodes_from = nodes[start:end]
-        node_to = nodes[end]
+        node_to = int(nodes[end])
         for node in nodes_from:
+            node = int(node)
             if graph.has_edge(node, node_to):
                 graph[node][node_to]["weight"] += 1
             else:

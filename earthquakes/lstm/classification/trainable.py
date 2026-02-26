@@ -16,6 +16,7 @@ from ray.air import Result
 from sklearn import metrics
 from torch.utils.data import DataLoader
 
+from lstm.classification.losses import FocalLoss, LabelSmoothingCrossEntropy
 from lstm.classification.plots import plot_confusion_matrix, plot_roc_auc
 from lstm.model import LSTMModel
 from lstm.trainable.base import BaseLSTMTrainable
@@ -29,46 +30,58 @@ class ClassificationTrainable(BaseLSTMTrainable):
     def setup_data(self) -> None:
         assert self.lookback, "[lookback] cannot be None"
         self.quantiles = self.config.get("quantiles", 4)
-        self.one_hot, self.binned = self.qdata.categorical(self.quantiles)
+        network_features = self.config.get("network_features", [])
+        keep_node = bool(network_features)  # retain node for graph features when networkx enabled
+        self.one_hot, self.binned = self.qdata.categorical(self.quantiles, keep_node=keep_node)
         features = list(self.one_hot.columns)
         (self.target,) = self.qdata.targets
         self.one_hot["target"] = self.binned[f"{self.target}_binned"]
 
         sequences, targets = self.qdata.to_sequences(
-            self.one_hot, self.lookback, features=features, targets=["target"]
+            self.one_hot,
+            self.lookback,
+            features=features,
+            targets=["target"],
+            network_features=network_features,
+            network_lookback=self.config.get("network_lookback", 5),
         )
-        x_train, x_test, y_train, y_test = self.qdata.split(
+        x_train, x_test, y_train, y_test, x_val, y_val = self.qdata.split(
             sequences,
             targets[:, -1],
             test_size=self.test_size,
-            shuffle=True,
-            stratify=self.one_hot["target"][self.lookback :],
+            shuffle=False,
+            temporal=True,
+            val_ratio=self.config.get("val_ratio", 0.15),
         )
         self.x_train = x_train
         self.x_test = x_test
+        self.x_val = x_val
         self.y_train = y_train.to(torch.long)
         self.y_test = y_test.to(torch.long)
-
-    def setup_loaders(self) -> None:
-        self.train_dataset = torch.utils.data.TensorDataset(self.x_train, self.y_train)
-        self.test_dataset = torch.utils.data.TensorDataset(self.x_test, self.y_test)
-        self.train_loader = DataLoader(
-            self.train_dataset, batch_size=self.batch_size
-        )
-        self.test_loader = DataLoader(
-            self.test_dataset, batch_size=self.batch_size
-        )
+        self.y_val = y_val.to(torch.long)
 
     def setup_model(self) -> None:
-        num_features = len(self.one_hot.columns)
+        # Use actual sequence dimension to avoid mismatch with to_sequences output
+        # (len(one_hot.columns) can diverge due to target column, network features, etc.)
+        num_features = self.x_train.size(1)
+        dropout = self.config.get("dropout", 0.0)
+        use_attention = self.config.get("use_attention", False)
         self.model = LSTMModel(
             lookback=self.lookback,
             outputs=self.quantiles,
             hidden_size=self.hidden_size,
             num_layers=self.lstm_layers,
             num_features=num_features,
+            dropout=dropout,
+            use_attention=use_attention,
         ).to(self.device)
-        self.criterion = nn.CrossEntropyLoss().to(self.device)
+        loss_type = self.config.get("loss_type", "cross_entropy")
+        loss_map = {
+            "cross_entropy": nn.CrossEntropyLoss(),
+            "focal": FocalLoss(gamma=2.0),
+            "label_smoothing": LabelSmoothingCrossEntropy(smoothing=0.1),
+        }
+        self.criterion = loss_map.get(loss_type, nn.CrossEntropyLoss()).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
     def prepare_target_for_loss(self, target_batch: torch.Tensor) -> torch.Tensor:

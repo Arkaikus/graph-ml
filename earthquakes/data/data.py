@@ -187,7 +187,10 @@ class EarthquakeData(Hashable):
         if "node" in data:
             if "node" not in _features:
                 _features = _features + ["node"]
-            max_nodes = int(data["node"].max() + 1)
+            node_col = data["node"]
+            if isinstance(node_col, pd.DataFrame):
+                node_col = node_col.iloc[:, 0]
+            max_nodes = int(np.asarray(node_col).max()) + 1
             nx_features = network_features or self.network_features
             nx_lookback = network_lookback or self.network_lookback
 
@@ -199,17 +202,22 @@ class EarthquakeData(Hashable):
         def worker(start, end):
             output_chunk = data.iloc[start + 1 : end + 1][targets or self.targets]
             if "node" in data and nx_features:
-                input_chunk = data.iloc[start:end][_features]
-                graph = nodes2graph(input_chunk["node"].values, max_nodes, nx_lookback)
+                input_chunk = data.iloc[start:end][_features].copy()
+                # Ensure single node column (deduplicate if categorical produced duplicates)
+                input_chunk = input_chunk.loc[:, ~input_chunk.columns.duplicated()]
+                node_col = input_chunk["node"]
+                if isinstance(node_col, pd.DataFrame):
+                    node_col = node_col.iloc[:, 0]
+                nodes_arr = np.asarray(node_col, dtype=np.int64).flatten()
+                graph = nodes2graph(nodes_arr, max_nodes, nx_lookback)
                 for feature in nx_features or []:
                     property_df = networkx_property(graph, feature)
                     input_chunk = pd.merge(
-                        input_chunk.copy(),
+                        input_chunk,
                         property_df,
                         on="node",
                         how="left",
                     )
-
                 input_chunk.drop(columns=["node"], inplace=True)
             else:
                 input_chunk = data.iloc[start:end][_features]
@@ -234,16 +242,41 @@ class EarthquakeData(Hashable):
         test_size: float,
         torch_tensor=True,
         shuffle=False,
+        temporal=True,
         **kwargs,
     ):
         """
-        Returns the train test split of sequences and targets, with the option to convert to torch tensors
+        Returns the train test split of sequences and targets, with the option to convert to torch tensors.
+        For time series, use temporal=True to keep chronological order (last test_size fraction as test).
         :params sequences: ndarray, sequences of the data
         :params targets: ndarray, target values
         :params torch_tensor: bool, whether to convert the numpy arrays to torch tensors
         :params shuffle: bool, whether to shuffle the data before splitting
             false by default, due to the nature of time series data
+        :params temporal: bool, if True use last test_size fraction as test (no shuffle)
         """
+        if temporal:
+            n = len(sequences)
+            test_n = max(1, int(n * test_size))
+            train_val_n = n - test_n
+            val_ratio = kwargs.pop("val_ratio", 0.15)
+            val_n = max(1, int(train_val_n * val_ratio)) if val_ratio > 0 else 0
+            train_n = train_val_n - val_n
+            x_test = sequences[train_val_n:]
+            y_test = targets[train_val_n:]
+            x_train = sequences[:train_n]
+            y_train = targets[:train_n]
+            x_val = sequences[train_n:train_val_n] if val_n > 0 else sequences[:1]
+            y_val = targets[train_n:train_val_n] if val_n > 0 else targets[:1]
+            if torch_tensor:
+                x_train = torch.tensor(x_train, dtype=torch.float32)
+                x_test = torch.tensor(x_test, dtype=torch.float32)
+                y_train = torch.tensor(y_train, dtype=torch.float32)
+                y_test = torch.tensor(y_test, dtype=torch.float32)
+                x_val = torch.tensor(x_val, dtype=torch.float32)
+                y_val = torch.tensor(y_val, dtype=torch.float32)
+            return x_train, x_test, y_train, y_test, x_val, y_val
+
         if torch_tensor:
             sequences = torch.tensor(sequences, dtype=torch.float32)
             targets = torch.tensor(targets, dtype=torch.float32)
@@ -278,14 +311,21 @@ class EarthquakeData(Hashable):
             .astype(int)
         )
 
-    def categorical(self, quantiles: int | list = 4):
+    def categorical(self, quantiles: int | list = 4, keep_node: bool = False):
         """
         Applies quantile cut to the data and returns the one hot encoded
         dataframe plus the nnormalized features
         it also returns the binned features
+        When keep_node=True and data has node (from grid), node is retained for graph features in to_sequences.
         """
         data, bin_cols = self.cut(self.data, quantiles=quantiles)
         one_hot = self.one_hot(data)
-        concat = pd.concat((one_hot, data.drop(columns=["node"], errors="ignore")), axis=1)
+        # one_hot already has node from get_dummies; drop from other to avoid duplicate columns
+        drop_cols = ["node"] if not keep_node and "node" in data.columns else []
+        other = data.drop(columns=drop_cols + ["node"], errors="ignore")
+        concat = pd.concat((one_hot, other), axis=1)
         nobins = list(set(concat.columns) - set(bin_cols))
-        return concat[nobins], concat[bin_cols]
+        result = concat[nobins]
+        if not keep_node and "node" in result.columns:
+            result = result.drop(columns=["node"], errors="ignore")
+        return result, concat[bin_cols]
