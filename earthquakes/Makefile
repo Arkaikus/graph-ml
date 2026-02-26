@@ -11,6 +11,9 @@ lint:
 lint-fix:
 	uv run ruff check . --fix
 
+clean:
+	rm -rf ~/.cache/ray/tmp/*
+
 # this will download the csv file to csv/9923ce9a42736848b544e335a4d7c5fb.csv
 download-default:
 	@echo "Downloading default data..."
@@ -37,9 +40,9 @@ tune-graphs-resume:
 	uv run quakes graphs link-prediction-tune -f csv/edges_100_$(EDGE_HASH).csv -s 10 -ex $(EXPERIMENT_DIR)
 
 tune-lstm:
-	uv run quakes lstm tune --quantiles 2 --samples 10 --metric accuracy --mode max
-	uv run quakes lstm tune --quantiles 3 --samples 10 --metric accuracy --mode max
-	uv run quakes lstm tune --quantiles 4 --samples 10 --metric accuracy --mode max
+	uv run --active quakes lstm tune --quantiles 2 --samples 10 --metric accuracy --mode max
+	uv run --active quakes lstm tune --quantiles 3 --samples 10 --metric accuracy --mode max
+	uv run --active quakes lstm tune --quantiles 4 --samples 10 --metric accuracy --mode max
 
 tune-lstm-resume:
 	@test -n "$(EXPERIMENT_DIR)" || (echo "Usage: make tune-lstm-resume EXPERIMENT_DIR=~/ray_results/ClassificationTrainable_..." ; exit 1)
@@ -48,12 +51,12 @@ tune-lstm-resume:
 	uv run quakes lstm tune --quantiles 4 --samples 10 --metric accuracy --mode max -ex $(EXPERIMENT_DIR)
 
 tune-lstm-networkx:
-	uv run quakes lstm tune --quantiles 2 --samples 100 --metric accuracy --mode max --networkx t
-	uv run quakes lstm tune --quantiles 3 --samples 100 --metric accuracy --mode max --networkx t
-	uv run quakes lstm tune --quantiles 4 --samples 100 --metric accuracy --mode max --networkx t
+	uv run quakes lstm tune --quantiles 2 --samples 100 --metric accuracy --mode max --networkx
+	uv run quakes lstm tune --quantiles 3 --samples 100 --metric accuracy --mode max --networkx
+	uv run quakes lstm tune --quantiles 4 --samples 100 --metric accuracy --mode max --networkx
 
 tune-lstm-networkx-resume:
 	@test -n "$(EXPERIMENT_DIR)" || (echo "Usage: make tune-lstm-networkx-resume EXPERIMENT_DIR=~/ray_results/ClassificationTrainable_..." ; exit 1)
-	uv run quakes lstm tune --quantiles 2 --samples 100 --metric accuracy --mode max --networkx t -ex $(EXPERIMENT_DIR)
-	uv run quakes lstm tune --quantiles 3 --samples 100 --metric accuracy --mode max --networkx t -ex $(EXPERIMENT_DIR)
-	uv run quakes lstm tune --quantiles 4 --samples 100 --metric accuracy --mode max --networkx t -ex $(EXPERIMENT_DIR)
+	uv run quakes lstm tune --quantiles 2 --samples 100 --metric accuracy --mode max --networkx -ex $(EXPERIMENT_DIR)
+	uv run quakes lstm tune --quantiles 3 --samples 100 --metric accuracy --mode max --networkx -ex $(EXPERIMENT_DIR)
+	uv run quakes lstm tune --quantiles 4 --samples 100 --metric accuracy --mode max --networkx -ex $(EXPERIMENT_DIR)
