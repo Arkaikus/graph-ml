@@ -1,12 +1,15 @@
 """Training loop for LSTM model."""
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+
+if TYPE_CHECKING:
+    from geohash.training.visualizer import TrainingVisualizer
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,7 @@ def train(
     device: str,
     epochs: int,
     learning_rate: float,
+    visualizer: Optional["TrainingVisualizer"] = None,
 ) -> dict[str, list[float]]:
     """
     Train model for specified epochs.
@@ -36,6 +40,8 @@ def train(
         Number of training epochs.
     learning_rate : float
         Learning rate for optimizer.
+    visualizer : TrainingVisualizer, optional
+        If provided, updates the terminal line graph after each epoch.
 
     Returns
     -------
@@ -81,11 +87,17 @@ def train(
         history["rmse"].append(rmse)
         history["mae"].append(mae)
 
+        if visualizer is not None:
+            visualizer.update(history, epoch, epochs)
+
         logger.info(
             f"Epoch {epoch:02d} | "
             f"train_loss={train_loss_mean:.4f} | "
             f"test_loss={test_loss:.4f} | "
             f"rmse={rmse:.4f} | mae={mae:.4f}"
         )
+
+    if visualizer is not None:
+        visualizer.close()
 
     return history

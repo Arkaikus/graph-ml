@@ -19,11 +19,10 @@ from geohash.data import (
 )
 from geohash.model import NextMagnitudeLSTM
 from geohash.store import RunStore
-from geohash.training import evaluate, train
+from geohash.training import TrainingVisualizer, evaluate, train
 from geohash.utils import set_seed
 
 logger = logging.getLogger(__name__)
-
 
 @click.command(name="train")
 @click.option("--experiment-name", default=None, help="Experiment name")
@@ -34,10 +33,10 @@ logger = logging.getLogger(__name__)
 @click.option("--embedding-dim", type=int, default=16, help="Embedding dimension")
 @click.option("--device", type=click.Choice(["cpu", "cuda"]), default="cpu", help="Device")
 @click.option("--seed", type=int, default=42, help="Random seed")
-@click.option("--min-lat", type=float, default=32.0, help="Min latitude")
-@click.option("--max-lat", type=float, default=42.0, help="Max latitude")
-@click.option("--min-lon", type=float, default=-125.0, help="Min longitude")
-@click.option("--max-lon", type=float, default=-114.0, help="Max longitude")
+@click.option("--min-lat", type=float, default=-0.132, help="Min latitude")
+@click.option("--max-lat", type=float, default=9.796, help="Max latitude")
+@click.option("--min-lon", type=float, default=-80.343, help="Min longitude")
+@click.option("--max-lon", type=float, default=-72.466, help="Max longitude")
 def train_cmd(
     experiment_name: str,
     epochs: int,
@@ -150,6 +149,7 @@ def train_cmd(
 
     # Train
     click.echo(f"Training on {config.training.device}...")
+    visualizer = TrainingVisualizer(enabled=True)
     history = train(
         model=model,
         train_loader=train_loader,
@@ -157,6 +157,7 @@ def train_cmd(
         device=config.training.device,
         epochs=config.training.epochs,
         learning_rate=config.training.learning_rate,
+        visualizer=visualizer,
     )
 
     # Evaluate on test set and get predictions
