@@ -5,17 +5,18 @@
 Install the package with **uv** (recommended):
 
 ```bash
-# From repo root
+cd earthquakes
 uv sync
 ```
 
 Or with pip:
 
 ```bash
+cd earthquakes
 pip install -e .
 ```
 
-Ensure dependencies are installed (see root `pyproject.toml`). Run `uv sync` from the repo root.
+Ensure dependencies are installed (see `earthquakes/pyproject.toml`). Run `uv sync` from the `earthquakes/` directory.
 
 ## download data with
 
@@ -47,7 +48,7 @@ if [ -d "$HOME/.local/bin" ] ; then
 fi
 ```
 
-If you installed with `uv sync`, run `uv run quakes --help` from the repo root, or ensure the venv's bin is on your PATH.
+If you installed with `uv sync`, run `uv run quakes --help` from the `earthquakes/` directory, or ensure the venv's bin is on your PATH.
 
 if nvidia cuda is failing try
 

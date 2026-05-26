@@ -9,4 +9,23 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "torch>=2.0.0",
+    "click>=8.0.0",
+    "matplotlib>=3.5.0",
+    "pydantic>=2.0.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
+
+[project.scripts]
+geohash = "geohash.main:cli"
+quakes-geohash = "geohash.main:cli"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-v --cov=geohash --cov-report=term-missing"

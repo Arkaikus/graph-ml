@@ -3,6 +3,7 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -18,13 +19,21 @@ logger = logging.getLogger(__name__)
 class BaseLSTMTrainable(tune.Trainable, ABC):
     """Base trainable for LSTM tasks. Subclasses implement setup_data, setup_model, and optionally batch_metrics."""
 
-    def setup(self, config: dict, qdata: EarthquakeData):
+    def setup(
+        self,
+        config: dict,
+        qdata: EarthquakeData,
+        output_dir: Path | None = None,
+        sequences_cache_dir: Path | None = None,
+    ):
         """Parse config and delegate to subclass setup methods."""
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(self.trial_id)
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.qdata = qdata
         self.config = config
+        self.output_dir = output_dir or Path.cwd() / "runs" / qdata.hash
+        self.sequences_cache_dir = sequences_cache_dir
 
         self.lookback = config.get("lookback")
         self.test_size = config.get("test_size")

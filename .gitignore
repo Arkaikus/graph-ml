@@ -1,9 +1,9 @@
+*.csv
 *.ipynb
 *.pth
 *.png
 *.puml
 creds.txt
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -143,6 +143,10 @@ venv.bak/
 
 # mkdocs documentation
 /site
+
+# ML / experiment outputs
+runs/
+mlruns/
 
 # mypy
 .mypy_cache/

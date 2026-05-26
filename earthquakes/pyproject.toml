@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "earthquakes"
 version = "1.0.0"
 description = "CLI and training pipeline for earthquake catalog data (USGS, graph link prediction, LSTM)"
-readme = "earthquakes/README.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "click",
@@ -26,14 +26,15 @@ dependencies = [
     "node2vec",
     "gensim",
     "ray[tune]",
+    "mlflow",
     "matplotlib",
     "seaborn",
     "tqdm",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["earthquakes/tests"]
-pythonpath = ["earthquakes"]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
@@ -47,8 +48,8 @@ select = ["E", "F", "I", "N", "W"]
 quakes = "main:main"
 
 [tool.hatch.build.targets.wheel]
-sources = ["earthquakes"]
-exclude = ["earthquakes/tests"]
+only-include = ["__init__.py", "main.py", "settings.py", "validation.py", "data", "graphs", "lstm", "reporting"]
+exclude = ["tests"]
 
 [dependency-groups]
 dev = [

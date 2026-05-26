@@ -29,24 +29,42 @@ class ClassificationTrainable(BaseLSTMTrainable):
     def setup_data(self) -> None:
         assert self.lookback, "[lookback] cannot be None"
         self.quantiles = self.config.get("quantiles", 4)
-        network_features = self.config.get("network_features", [])
-        keep_node = bool(network_features)  # retain node for graph features when networkx enabled
-        self.one_hot, self.binned = self.qdata.categorical(self.quantiles, keep_node=keep_node)
-        features = list(self.one_hot.columns)
         (self.target,) = self.qdata.targets
-        self.one_hot["target"] = self.binned[f"{self.target}_binned"]
 
-        sequences, targets = self.qdata.to_sequences(
-            self.one_hot,
-            self.lookback,
-            features=features,
-            targets=["target"],
-            network_features=network_features,
-            network_lookback=self.config.get("network_lookback", 5),
-        )
+        sequences_cache_dir = getattr(self, "sequences_cache_dir", None)
+        if sequences_cache_dir is not None:
+            from lstm.dataset import load_sequences, sequences_path_for_config
+
+            path = sequences_path_for_config(
+                self.config,
+                Path(sequences_cache_dir),
+                task="classification",
+                quantiles=self.quantiles,
+            )
+            sequences, targets_2d = load_sequences(path)
+            targets = targets_2d.squeeze()
+        else:
+            network_features = self.config.get("network_features", [])
+            keep_node = bool(network_features)
+            self.one_hot, self.binned = self.qdata.categorical(self.quantiles, keep_node=keep_node)
+            features = list(self.one_hot.columns)
+            self.one_hot["target"] = self.binned[f"{self.target}_binned"]
+            sequences, targets_full = self.qdata.to_sequences(
+                self.one_hot,
+                self.lookback,
+                features=features,
+                targets=["target"],
+                network_features=network_features,
+                network_lookback=self.config.get("network_lookback", 5),
+            )
+            targets = targets_full[:, -1]
+            self.one_hot, self.binned = self.qdata.categorical(
+                self.quantiles, keep_node=bool(self.config.get("network_features", []))
+            )
+
         x_train, x_test, y_train, y_test, x_val, y_val = self.qdata.split(
             sequences,
-            targets[:, -1],
+            targets,
             test_size=self.test_size,
             shuffle=False,
             temporal=True,
@@ -138,6 +156,7 @@ class ClassificationTrainable(BaseLSTMTrainable):
         print(result.path)
         print(result.metrics_dataframe)
 
-        save_to = Path.cwd() / "plots" / self.qdata.hash / Path(result.path).stem
+        save_to = self.output_dir / Path(result.path).stem
+        save_to.mkdir(parents=True, exist_ok=True)
         shutil.copytree(result.path, save_to, dirs_exist_ok=True)
         self.plot(save_to)

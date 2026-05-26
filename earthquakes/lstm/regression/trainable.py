@@ -21,14 +21,27 @@ class RegressionTrainable(BaseLSTMTrainable):
 
     def setup_data(self) -> None:
         assert self.lookback, "[lookback] cannot be None"
-        network_features = self.config.get("network_features", [])
-        network_lookback = self.config.get("network_lookback", 5)
-        sequences, targets = self.qdata.to_sequences(
-            self.qdata.normalized_data,
-            self.lookback,
-            network_features=network_features,
-            network_lookback=network_lookback,
-        )
+        sequences_cache_dir = getattr(self, "sequences_cache_dir", None)
+        if sequences_cache_dir is not None:
+            from pathlib import Path
+
+            from lstm.dataset import load_sequences, sequences_path_for_config
+
+            path = sequences_path_for_config(
+                self.config,
+                Path(sequences_cache_dir),
+                task="regression",
+            )
+            sequences, targets = load_sequences(path)
+        else:
+            network_features = self.config.get("network_features", [])
+            network_lookback = self.config.get("network_lookback", 5)
+            sequences, targets = self.qdata.to_sequences(
+                self.qdata.normalized_data,
+                self.lookback,
+                network_features=network_features,
+                network_lookback=network_lookback,
+            )
         x_train, x_test, y_train, y_test, x_val, y_val = self.qdata.split(
             sequences,
             targets,
@@ -40,9 +53,9 @@ class RegressionTrainable(BaseLSTMTrainable):
         self.x_train = x_train
         self.x_test = x_test
         self.x_val = x_val
-        self.y_train = y_train[:, -1]
-        self.y_test = y_test[:, -1]
-        self.y_val = y_val[:, -1]
+        self.y_train = y_train[:, -1] if y_train.dim() > 1 else y_train
+        self.y_test = y_test[:, -1] if y_test.dim() > 1 else y_test
+        self.y_val = y_val[:, -1] if y_val.dim() > 1 else y_val
 
     def setup_model(self) -> None:
         # Use actual sequence dimension; len(qdata.features) can diverge when network
@@ -99,7 +112,8 @@ class RegressionTrainable(BaseLSTMTrainable):
         def target_idx(y, pred, idx):
             return y[:, idx : idx + 1], pred[:, idx : idx + 1]
 
-        save_to = Path.cwd() / "plots" / self.qdata.hash / Path(result.path).stem
+        save_to = self.output_dir / Path(result.path).stem
+        save_to.mkdir(parents=True, exist_ok=True)
         shutil.copytree(result.path, save_to, dirs_exist_ok=True)
         for idx, target in enumerate(self.qdata.targets):
             plot_scatter(

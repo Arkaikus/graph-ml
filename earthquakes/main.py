@@ -6,10 +6,9 @@ import matplotlib
 matplotlib.use("Agg")
 
 import click
-
-from earthquakes.data.commands import usgs_group
-from earthquakes.graphs.commands import graphs_group
-from earthquakes.lstm.commands import lstm_group
+from data.commands import usgs_group
+from graphs.commands import graphs_group
+from lstm.commands import lstm_group
 
 
 def main():

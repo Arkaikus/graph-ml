@@ -1,4 +1,5 @@
 import logging
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -10,10 +11,13 @@ from data.grid import Grid
 from data.usgs import USGS
 from lstm import utils
 from lstm.classification import ClassificationTrainable
+from lstm.dataset import LOOKBACK_CHOICES, NETWORK_LOOKBACK_CHOICES, precompute_sequences
 from lstm.regression import RegressionTrainable
 from ray import tune
-from ray.tune import ResultGrid, RunConfig
+from ray.air.integrations.mlflow import MLflowLoggerCallback
+from ray.tune import RunConfig
 from ray.tune.schedulers import AsyncHyperBandScheduler as ASHAScheduler
+from reporting.reporter import Reporter
 
 logger = logging.getLogger(__name__)
 
@@ -21,70 +25,6 @@ TASK_TRAINABLES = {
     "classification": ClassificationTrainable,
     "regression": RegressionTrainable,
 }
-
-
-def save_experiment_df(
-    results: ResultGrid,
-    metric: str,
-    mode: str,
-    qdata: EarthquakeData,
-    task: str = "classification",
-    networkx: bool = False,
-):
-    results_df = results.get_dataframe()
-    sort_by = (
-        metric
-        if metric in results_df.columns
-        else ("test_loss" if "test_loss" in results_df.columns else results_df.columns[0])
-    )
-    results_df = results_df.sort_values(by=sort_by, ascending=(mode == "min"))
-    print(results_df.columns)
-
-    def _fmt(x):
-        return f"{x:.3f}" if isinstance(x, float) else x
-
-    results_df = results_df.apply(lambda col: col.map(_fmt) if col.dtype.kind == "f" else col)
-    extra_columns = ["accuracy", "config/quantiles", "config/loss_type"] if task == "classification" else []
-
-    if networkx:
-        extra_columns += [
-            "config/network_features",
-            "config/network_lookback",
-            "config/node_size",
-        ]
-
-    base_cols = [
-        "loss",
-        "mean_loss",
-        "test_loss",
-        "config/lookback",
-        "config/test_size",
-        "config/batch_size",
-        "config/hidden_size",
-        "config/lstm_layers",
-        "config/lr",
-        "config/max_epochs",
-        "config/dropout",
-    ]
-    select_cols = [c for c in base_cols + extra_columns if c in results_df.columns]
-    results_df = results_df[select_cols].rename(
-        columns={c: c.replace("config/", "").replace("_", " ") for c in results_df.columns}
-    )
-    # Format network_features when it's a list
-    if "network features" in results_df.columns:
-        results_df["network features"] = results_df["network features"].apply(
-            lambda x: ",".join(x) if isinstance(x, (list, tuple)) else x
-        )
-    latex_table = results_df.to_latex(index=False)
-    save_to = Path.cwd() / "plots" / qdata.hash
-    save_to.mkdir(parents=True, exist_ok=True)
-    experiment_name = Path(results.experiment_path).stem
-    with open(save_to / f"{experiment_name}_results_table.tex", "w") as f:
-        f.write(latex_table)
-
-    results_df.to_csv(save_to / f"{experiment_name}_results_table.csv", index=False)
-    logger.info("Saved .tex table to %s", save_to / f"{experiment_name}_results_table.tex")
-    logger.info("Saved .csv table to %s", save_to / f"{experiment_name}_results_table.csv")
 
 
 @click.command(name="tune")
@@ -113,6 +53,17 @@ def save_experiment_df(
 @click.option("-ex", "--experiment", type=str, help="resume experiment path", default=None)
 @click.option("-cpus", "--cpus", type=int, help="cpus to use", default=8)
 @click.option("-gpus", "--gpus", type=int, help="gpus to use", default=1)
+@click.option(
+    "--mlflow-uri",
+    type=str,
+    help="MLflow tracking URI (default: MLFLOW_TRACKING_URI or ./mlruns)",
+    default="http://localhost:5000",
+)
+@click.option(
+    "--force-precompute",
+    is_flag=True,
+    help="Recompute parquet sequences even if cache exists",
+)
 def tune_command(
     features: list,
     target: str,
@@ -133,6 +84,8 @@ def tune_command(
     experiment: str | None,
     cpus: int,
     gpus: int,
+    mlflow_uri: str,
+    force_precompute: bool,
 ):
     """
     Reads a processed .csv catalog and trains an LSTM neural network.
@@ -159,23 +112,40 @@ def tune_command(
             "closeness_centrality",
             "pagerank",
         ]
-        param_space["network_features"] = nx_features  # all features at once
-        param_space["network_lookback"] = tune.randint(1, 10)
+        param_space["network_features"] = nx_features
+        param_space["network_lookback"] = tune.choice(NETWORK_LOOKBACK_CHOICES)
         param_space["node_size"] = node_size
 
     qdata = EarthquakeData(raw_data, features, [target], min_magnitude=min_mag, max_magnitude=max_mag, **kwargs)
 
+    reporter = Reporter(output_dir=Path.cwd() / "runs", tracking_uri=mlflow_uri)
+    output_dir = reporter.subdir(qdata.hash)
+
     logger.info("Processing data...")
-    utils.plot_analysis(qdata.data, features, target, Path.cwd() / "plots" / qdata.hash)
+    utils.plot_analysis(qdata.data, features, target, output_dir)
 
     trainable_cls = TASK_TRAINABLES[task]
     run_name = trainable_cls.__name__
     logger.info("Tuning with metric %s mode: %s (task=%s)", metric, mode, task)
     scheduler = ASHAScheduler(metric=metric, mode=mode, grace_period=1, reduction_factor=2)
-    trainable = tune.with_parameters(trainable_cls, qdata=qdata)
+
+    sequences_cache_dir = precompute_sequences(
+        qdata,
+        task=task,
+        networkx=networkx,
+        quantiles=quantiles,
+        out_dir=Path.cwd() / "cache" / "parquet",
+        force=force_precompute,
+    )
+    trainable = tune.with_parameters(
+        trainable_cls,
+        qdata=qdata,
+        output_dir=output_dir,
+        sequences_cache_dir=sequences_cache_dir,
+    )
     trainable = tune.with_resources(trainable, resources={"cpu": cpus, "gpu": gpus})
     param_space = {
-        "lookback": tune.randint(10, 150),
+        "lookback": tune.choice(LOOKBACK_CHOICES),
         "test_size": tune.uniform(0.1, 0.3),
         "batch_size": tune.randint(2, 20),
         "hidden_size": tune.randint(10, 150),
@@ -214,6 +184,17 @@ def tune_command(
             param_space=param_space,
         )
     else:
+        run_config = RunConfig(
+            name=run_name,
+            callbacks=[
+                MLflowLoggerCallback(
+                    tracking_uri=mlflow_uri,
+                    experiment_name="lstm",
+                    tags={"task": task, "networkx": str(networkx)},
+                    save_artifact=True,
+                )
+            ],
+        )
         tuner = tune.Tuner(
             trainable,
             tune_config=tune.TuneConfig(
@@ -221,14 +202,19 @@ def tune_command(
                 num_samples=samples,
                 max_concurrent_trials=2,
             ),
-            run_config=RunConfig(name=run_name),
+            run_config=run_config,
             param_space=param_space,
         )
 
     results = tuner.fit()
     logger.info("Results path at %s", results.experiment_path)
     best_result = results.get_best_result(metric, mode)
-    trainable_instance = tune.with_parameters(trainable_cls, qdata=qdata)(config=best_result.config)
+    trainable_instance = tune.with_parameters(
+        trainable_cls,
+        qdata=qdata,
+        output_dir=output_dir,
+        sequences_cache_dir=sequences_cache_dir,
+    )(config=best_result.config)
     try:
         trainable_instance.test_result(best_result, metric, mode)
     except Exception:
@@ -238,7 +224,7 @@ def tune_command(
     with open(Path(results.experiment_path) / "qdata.pkl", "wb") as f:
         pickle.dump(qdata, f)
 
-    save_experiment_df(results, metric, mode, qdata, task, networkx)
+    reporter.log_experiment_results(results, metric, mode, qdata, task, networkx)
 
 
 lstm_group = click.Group("lstm", help="tools to train and tune lstm models")
