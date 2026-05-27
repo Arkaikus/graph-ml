@@ -3,6 +3,7 @@
 from .dataset import QuakeWindowDataset, collate_batch, make_windows, standardize_numeric
 from .features import add_features, build_vocab, encode_geohash
 from .usgs import fetch_usgs_events
+from .window_viz import plot_window_grid
 
 __all__ = [
     "fetch_usgs_events",
@@ -13,4 +14,5 @@ __all__ = [
     "standardize_numeric",
     "QuakeWindowDataset",
     "collate_batch",
+    "plot_window_grid",
 ]

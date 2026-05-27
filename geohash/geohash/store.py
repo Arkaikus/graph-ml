@@ -78,6 +78,7 @@ class RunStore:
             "final_rmse": float(history["rmse"][-1]),
             "final_mae": float(history["mae"][-1]),
             "final_test_loss": float(history["test_loss"][-1]),
+            "r2": float(predictions.get("r2", float("nan"))),
         }
         metrics_path = run_dir / "metrics.json"
         with open(metrics_path, "w") as f:
@@ -102,6 +103,18 @@ class RunStore:
         plot_path = run_dir / "training_curves.png"
         self._plot_history(history, plot_path)
         logger.info(f"Saved plot to {plot_path}")
+
+        # Save predictions scatter
+        scatter_path = run_dir / "predictions_scatter.png"
+        self._plot_predictions_scatter(
+            targets=predictions["targets"],
+            preds=predictions["predictions"],
+            r2=float(predictions.get("r2", float("nan"))),
+            rmse=float(history["rmse"][-1]),
+            mae=float(history["mae"][-1]),
+            output_path=scatter_path,
+        )
+        logger.info(f"Saved scatter plot to {scatter_path}")
 
         return run_dir
 
@@ -276,3 +289,66 @@ class RunStore:
         plt.tight_layout()
         plt.savefig(output_path, dpi=100, bbox_inches="tight")
         plt.close()
+
+    @staticmethod
+    def _plot_predictions_scatter(
+        targets: list[float],
+        preds: list[float],
+        r2: float,
+        rmse: float,
+        mae: float,
+        output_path: Path,
+    ) -> None:
+        """
+        Plot predicted vs actual magnitudes scatter for the test set.
+
+        Parameters
+        ----------
+        targets : list[float]
+            Ground-truth magnitudes.
+        preds : list[float]
+            Model predictions.
+        r2 : float
+            R² coefficient of determination.
+        rmse : float
+            Root mean squared error.
+        mae : float
+            Mean absolute error.
+        output_path : Path
+            Path to save PNG.
+        """
+        t = np.array(targets)
+        p = np.array(preds)
+
+        lo = min(t.min(), p.min())
+        hi = max(t.max(), p.max())
+        pad = (hi - lo) * 0.05
+        diag = [lo - pad, hi + pad]
+
+        fig, ax = plt.subplots(figsize=(7, 7))
+
+        ax.scatter(t, p, alpha=0.35, s=18, color="steelblue", edgecolors="none")
+        ax.plot(diag, diag, color="tomato", linewidth=1.2, linestyle="--", label="Perfect fit")
+
+        annotation = f"R² = {r2:.4f}\nRMSE = {rmse:.4f}\nMAE = {mae:.4f}\nn = {len(t)}"
+        ax.text(
+            0.04, 0.96, annotation,
+            transform=ax.transAxes,
+            verticalalignment="top",
+            fontfamily="monospace",
+            fontsize=10,
+            bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "alpha": 0.8},
+        )
+
+        ax.set_xlabel("Actual magnitude", fontsize=12)
+        ax.set_ylabel("Predicted magnitude", fontsize=12)
+        ax.set_title("Test set: predicted vs actual magnitude", fontsize=13)
+        ax.set_xlim(diag)
+        ax.set_ylim(diag)
+        ax.set_aspect("equal")
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.25)
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=120, bbox_inches="tight")
+        plt.close(fig)

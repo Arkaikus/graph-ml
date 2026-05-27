@@ -9,7 +9,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from geohash.store import RunStore
+from geohash.config import ExperimentConfig
 
+exp_config = ExperimentConfig()
 
 @click.group(name="inspect")
 def inspect_group():
@@ -20,7 +22,7 @@ def inspect_group():
 @inspect_group.command(name="list-runs")
 def list_runs_cmd():
     """List all saved training runs."""
-    store = RunStore(Path.home() / ".geohash-runs")
+    store = RunStore(exp_config.output_dir)
     runs = store.list_runs()
 
     if not runs:
@@ -43,7 +45,7 @@ def list_runs_cmd():
 @click.argument("run_name")
 def inspect_run_cmd(run_name: str):
     """Inspect detailed metrics for a specific run."""
-    store = RunStore(Path.home() / ".geohash-runs")
+    store = RunStore(exp_config.output_dir)
     run_dir = store.get_run_by_name(run_name)
 
     if run_dir is None:
@@ -105,7 +107,7 @@ def compare_runs_cmd(run_names: tuple[str, ...]):
         click.echo("Please provide at least 2 run names to compare.")
         return
 
-    store = RunStore(Path.home() / ".geohash-runs")
+    store = RunStore(exp_config.output_dir)
     runs_data = []
 
     for run_name in run_names:
@@ -143,7 +145,7 @@ def compare_runs_cmd(run_names: tuple[str, ...]):
 @click.argument("run_name")
 def plot_run_cmd(run_name: str):
     """Display training curves plot for a run."""
-    store = RunStore(Path.home() / ".geohash-runs")
+    store = RunStore(exp_config.output_dir)
     run_dir = store.get_run_by_name(run_name)
 
     if run_dir is None:

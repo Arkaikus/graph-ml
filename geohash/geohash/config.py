@@ -14,8 +14,8 @@ class USGSQueryParams(BaseModel):
     max_latitude: float = Field(90.0, ge=-90.0, le=90.0, description="Maximum latitude")
     min_longitude: float = Field(-180.0, ge=-180.0, le=180.0, description="Minimum longitude")
     max_longitude: float = Field(180.0, ge=-180.0, le=180.0, description="Maximum longitude")
-    start_time: str = Field("2018-01-01", description="Start date (YYYY-MM-DD)")
-    end_time: str = Field("2024-12-31", description="End date (YYYY-MM-DD)")
+    start_time: str = Field("1990-01-01", description="Start date (YYYY-MM-DD)")
+    end_time: str = Field("2025-12-31", description="End date (YYYY-MM-DD)")
     min_magnitude: float = Field(1.0, ge=0.0, description="Minimum magnitude")
     order_by: Literal["time-asc", "time", "magnitude"] = Field("time-asc", description="Sort order")
     limit: int = Field(20000, gt=0, description="Maximum number of events")
@@ -87,7 +87,7 @@ class ExperimentConfig(BaseModel):
         description="Experiment identifier"
     )
     output_dir: Path = Field(
-        default_factory=lambda: Path.home() / ".geohash-runs",
+        default_factory=lambda: Path.cwd() / ".geohash-runs",
         description="Directory to save run results"
     )
 

@@ -14,6 +14,7 @@ from geohash.data import (
     collate_batch,
     fetch_usgs_events,
     make_windows,
+    plot_window_grid,
     standardize_numeric,
     QuakeWindowDataset,
 )
@@ -96,6 +97,7 @@ def train_cmd(
     # Feature engineering
     click.echo("Adding features...")
     df = add_features(df, config.geohash.precision)
+    print(df.shape)
 
     stoi = build_vocab(df["geohash"].tolist())
     vocab_size = len(stoi)
@@ -112,6 +114,17 @@ def train_cmd(
     )
     click.echo(f"✓ Created {len(samples)} training windows")
 
+    # Create run directory early so the spot-check plot can be saved
+    run_dir = config.get_run_dir()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Visual spot check: 4x4 grid of randomly sampled windows
+    click.echo("Creating window spot check (4x4 grid)...")
+    spot_fig = plot_window_grid(samples, num_samples=16, seed=config.training.seed)
+    spot_check_path = run_dir / "window_spot_check.png"
+    spot_fig.savefig(spot_check_path, dpi=150, bbox_inches="tight")
+    click.echo(f"✓ Saved window spot check to {spot_check_path}")
+
     # Split and standardize
     split_idx = int(len(samples) * config.training.train_split)
     train_samples = samples[:split_idx]
@@ -125,7 +138,7 @@ def train_cmd(
     train_loader = DataLoader(
         train_ds,
         batch_size=config.training.batch_size,
-        shuffle=True,
+        shuffle=False,
         collate_fn=collate_batch,
     )
     test_loader = DataLoader(
@@ -176,14 +189,22 @@ def train_cmd(
             all_preds.extend(pred.squeeze(1).cpu().numpy().tolist())
             all_targets.extend(y.squeeze(1).cpu().numpy().tolist())
 
+    targets_arr = all_targets
+    preds_arr = all_preds
+    ss_res = sum((t - p) ** 2 for t, p in zip(targets_arr, preds_arr))
+    t_mean = sum(targets_arr) / len(targets_arr)
+    ss_tot = sum((t - t_mean) ** 2 for t in targets_arr)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    click.echo(f"  R²  = {r2:.4f}")
+
     predictions = {
         "targets": all_targets,
         "predictions": all_preds,
+        "r2": r2,
     }
 
     # Save run
     click.echo("Saving run...")
-    run_dir = config.get_run_dir()
     store = RunStore(config.experiment.output_dir)
     store.save_run(
         run_dir=run_dir,
