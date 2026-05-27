@@ -90,7 +90,4 @@ def beats_baseline(
 ) -> dict[str, bool]:
     """True if model RMSE is lower than each baseline."""
     model_rmse = model_metrics["rmse"]
-    return {
-        name: model_rmse < metrics["rmse"]
-        for name, metrics in baseline_metrics.items()
-    }
+    return {name: model_rmse < metrics["rmse"] for name, metrics in baseline_metrics.items()}

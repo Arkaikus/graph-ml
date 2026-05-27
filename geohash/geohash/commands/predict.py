@@ -13,7 +13,6 @@ from geohash.data import (
     add_base_features,
     build_windows_for_df,
     collate_batch,
-    standardize_numeric,
 )
 from geohash.inference.artifacts import build_model_from_bundle, load_run_bundle
 
@@ -32,9 +31,7 @@ def predict_cmd(run_dir: str, input_csv: str, output: str, device: str):
 
     bundle = load_run_bundle(run_path)
     if "preprocess" not in bundle or "model_state_dict" not in bundle:
-        raise click.ClickException(
-            f"Run dir missing preprocess.json or model_final.pt: {run_path}"
-        )
+        raise click.ClickException(f"Run dir missing preprocess.json or model_final.pt: {run_path}")
 
     pp = bundle["preprocess"]
     cfg = bundle.get("config", {})
@@ -60,9 +57,7 @@ def predict_cmd(run_dir: str, input_csv: str, output: str, device: str):
     stoi = pp["stoi"]
     char_stoi = pp.get("char_stoi")
 
-    samples = build_windows_for_df(
-        df, stoi, window, geohash, char_stoi=char_stoi, validate=False
-    )
+    samples = build_windows_for_df(df, stoi, window, geohash, char_stoi=char_stoi, validate=False)
     if not samples:
         raise click.ClickException("No windows could be built from input CSV.")
 

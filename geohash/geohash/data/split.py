@@ -45,9 +45,7 @@ def split_events_temporal(
     test_df = df.iloc[val_end:].reset_index(drop=True)
 
     if len(val_df) == 0 or len(test_df) == 0:
-        raise RuntimeError(
-            "Split produced empty val or test set. Widen data or adjust ratios."
-        )
+        raise RuntimeError("Split produced empty val or test set. Widen data or adjust ratios.")
 
     logger.info(
         "Temporal split: train=%d, val=%d, test=%d events",

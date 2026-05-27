@@ -13,7 +13,6 @@ from torch.utils.data import Dataset
 from geohash.data.features import (
     char_ids_for_sequence,
     compute_window_features,
-    geohash_to_char_ids,
     geohash_to_id,
 )
 
@@ -126,31 +125,16 @@ def _validate_windows(
     for i, s in enumerate(samples):
         x = s["x_num"]
         if torch.isnan(x).any() or torch.isinf(x).any():
-            bad_cols = [
-                _NUMERIC_COLS[c]
-                for c in range(x.shape[1])
-                if torch.isnan(x[:, c]).any() or torch.isinf(x[:, c]).any()
-            ]
-            raise RuntimeError(
-                f"NaN/Inf detected in x_num at sample index {i}, columns: {bad_cols}"
-            )
+            bad_cols = [_NUMERIC_COLS[c] for c in range(x.shape[1]) if torch.isnan(x[:, c]).any() or torch.isinf(x[:, c]).any()]
+            raise RuntimeError(f"NaN/Inf detected in x_num at sample index {i}, columns: {bad_cols}")
         y = s["y"]
         if torch.isnan(y).any() or torch.isinf(y).any():
-            raise RuntimeError(
-                f"NaN/Inf detected in target y at sample index {i} (value={y.item()!r})"
-            )
+            raise RuntimeError(f"NaN/Inf detected in target y at sample index {i} (value={y.item()!r})")
 
     if samples and samples[0]["gh_ids"].dim() == 1:
-        oov_samples = [
-            i
-            for i, s in enumerate(samples)
-            if (s["gh_ids"] < 0).any() or (s["gh_ids"] >= vocab_size).any()
-        ]
+        oov_samples = [i for i, s in enumerate(samples) if (s["gh_ids"] < 0).any() or (s["gh_ids"] >= vocab_size).any()]
         if oov_samples:
-            raise RuntimeError(
-                f"Out-of-vocabulary geohash IDs in {len(oov_samples)} samples "
-                f"(first: index {oov_samples[0]}). Vocab size: {vocab_size}."
-            )
+            raise RuntimeError(f"Out-of-vocabulary geohash IDs in {len(oov_samples)} samples (first: index {oov_samples[0]}). Vocab size: {vocab_size}.")
 
     all_targets = torch.cat([s["y"] for s in samples]).squeeze()
     logger.info(
@@ -185,22 +169,22 @@ def make_windows_temporal(
             target = float(df.iloc[end_idx]["magnitude"])
             target_time_ms = int(df.iloc[end_idx]["time_ms"])
 
-            samples.append(_make_sample_dict(
-                hist,
-                target,
-                stoi,
-                encoding,
-                geohash_precision,
-                char_stoi,
-                target_time_ms=target_time_ms,
-                target_idx=end_idx,
-            ))
+            samples.append(
+                _make_sample_dict(
+                    hist,
+                    target,
+                    stoi,
+                    encoding,
+                    geohash_precision,
+                    char_stoi,
+                    target_time_ms=target_time_ms,
+                    target_idx=end_idx,
+                )
+            )
             start_idx += stride
 
     if not samples:
-        raise RuntimeError(
-            "No training windows created. Lower min_len or widen data filters."
-        )
+        raise RuntimeError("No training windows created. Lower min_len or widen data filters.")
 
     logger.info("Created %d temporal windows from %d events.", len(samples), len(df))
 
@@ -237,12 +221,7 @@ def make_windows_spatial(
         current_time_ms = float(time_ms_arr[idx])
         neighbor_indices: list[int] = tree.query_ball_point(coords_rad[idx], r=radius_rad)
 
-        valid = [
-            j for j in neighbor_indices
-            if j != idx
-            and time_ms_arr[j] < current_time_ms
-            and (current_time_ms - float(time_ms_arr[j])) <= temporal_ms
-        ]
+        valid = [j for j in neighbor_indices if j != idx and time_ms_arr[j] < current_time_ms and (current_time_ms - float(time_ms_arr[j])) <= temporal_ms]
 
         if len(valid) < min_len:
             continue
@@ -250,23 +229,21 @@ def make_windows_spatial(
         hist = df.iloc[valid].sort_values("time_ms").tail(max_len)
         target = float(df.iloc[idx]["magnitude"])
 
-        samples.append(_make_sample_dict(
-            hist,
-            target,
-            stoi,
-            encoding,
-            geohash_precision,
-            char_stoi,
-            target_time_ms=int(current_time_ms),
-            target_idx=idx,
-        ))
+        samples.append(
+            _make_sample_dict(
+                hist,
+                target,
+                stoi,
+                encoding,
+                geohash_precision,
+                char_stoi,
+                target_time_ms=int(current_time_ms),
+                target_idx=idx,
+            )
+        )
 
     if not samples:
-        raise RuntimeError(
-            "No spatial windows created. "
-            "Try increasing --spatial-radius-km or --temporal-window-days, "
-            "or lower --min-len."
-        )
+        raise RuntimeError("No spatial windows created. Try increasing --spatial-radius-km or --temporal-window-days, or lower --min-len.")
 
     logger.info(
         "Created %d spatial windows from %d events (radius=%.1f km, lookback=%.1f days).",
@@ -301,14 +278,17 @@ def make_windows_hybrid(
         geohash_precision=geohash_precision,
         char_stoi=char_stoi,
     )
-    temporal = make_windows_temporal(
-        df, stoi, min_len, max_len, stride, validate=False, **window_kwargs
-    )
+    temporal = make_windows_temporal(df, stoi, min_len, max_len, stride, validate=False, **window_kwargs)
     try:
         spatial = make_windows_spatial(
-            df, stoi, min_len, max_len,
-            spatial_radius_km, temporal_window_days,
-            validate=False, **window_kwargs,
+            df,
+            stoi,
+            min_len,
+            max_len,
+            spatial_radius_km,
+            temporal_window_days,
+            validate=False,
+            **window_kwargs,
         )
     except RuntimeError:
         logger.warning("Spatial windows produced no samples; using temporal only.")

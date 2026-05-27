@@ -94,10 +94,12 @@ def collect_predictions(
 
     preds_arr = np.array(preds)
     targets_arr = np.array(targets)
-    loss = float(criterion(
-        torch.tensor(preds_arr).unsqueeze(1),
-        torch.tensor(targets_arr).unsqueeze(1),
-    ).item())
+    loss = float(
+        criterion(
+            torch.tensor(preds_arr).unsqueeze(1),
+            torch.tensor(targets_arr).unsqueeze(1),
+        ).item()
+    )
     metrics = compute_metrics(preds_arr, targets_arr, loss)
     return {
         "targets": targets,

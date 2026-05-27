@@ -1,17 +1,13 @@
 """Inspect commands for run management."""
 
-import json
-from pathlib import Path
-from typing import Optional
-
 import click
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from geohash.store import RunStore
 from geohash.config import ExperimentConfig
 
 exp_config = ExperimentConfig()
+
 
 @click.group(name="inspect")
 def inspect_group():
@@ -33,9 +29,9 @@ def list_runs_cmd():
     click.echo("=" * 80)
 
     for run in runs:
-        rmse = f"{run['final_rmse']:.4f}" if run['final_rmse'] is not None else "N/A"
-        mae = f"{run['final_mae']:.4f}" if run['final_mae'] is not None else "N/A"
-        loss = f"{run['final_test_loss']:.4f}" if run['final_test_loss'] is not None else "N/A"
+        rmse = f"{run['final_rmse']:.4f}" if run["final_rmse"] is not None else "N/A"
+        mae = f"{run['final_mae']:.4f}" if run["final_mae"] is not None else "N/A"
+        loss = f"{run['final_test_loss']:.4f}" if run["final_test_loss"] is not None else "N/A"
         click.echo(f"{run['name']:<50} {rmse:<10} {mae:<10} {loss:<10}")
 
     click.echo(f"\nTotal runs: {len(runs)}")
@@ -71,7 +67,7 @@ def inspect_run_cmd(run_name: str):
 
     # Display metrics
     if "metrics" in run_data:
-        click.echo(f"\n📊 Final Metrics:")
+        click.echo("\n📊 Final Metrics:")
         click.echo("-" * 60)
         metrics = run_data["metrics"]
         click.echo(f"  Train Loss: {metrics.get('train_loss', 'N/A')}")
@@ -89,7 +85,7 @@ def inspect_run_cmd(run_name: str):
             click.echo(f"  ... and {len(df) - 10} more")
 
     # Display artifact paths
-    click.echo(f"\n📁 Artifacts:")
+    click.echo("\n📁 Artifacts:")
     click.echo("-" * 60)
     for artifact in [
         "config.json",
@@ -178,6 +174,7 @@ def plot_run_cmd(run_name: str):
     click.echo(f"Opening plot: {plot_path}")
     try:
         import subprocess
+
         subprocess.Popen(["xdg-open", str(plot_path)])
     except Exception as e:
         click.echo(f"Could not open image viewer: {e}")

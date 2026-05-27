@@ -59,9 +59,7 @@ def _plot_single_window(
     depths = x_num[:, 1].numpy()
     delta_t = x_num[:, 3].numpy()
 
-    inner_gs = gridspec.GridSpecFromSubplotSpec(
-        3, 1, subplot_spec=outer_gs_cell, hspace=0.05
-    )
+    inner_gs = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=outer_gs_cell, hspace=0.05)
 
     ax_mag = fig.add_subplot(inner_gs[0])
     ax_dep = fig.add_subplot(inner_gs[1], sharex=ax_mag)
@@ -142,15 +140,12 @@ def plot_window_grid(
     fig = Figure(figsize=figsize)
     FigureCanvasAgg(fig)  # attach canvas so savefig works
     fig.suptitle(
-        f"Window Spot Check — {actual_n} randomly sampled windows "
-        f"(seed={seed})",
+        f"Window Spot Check — {actual_n} randomly sampled windows (seed={seed})",
         fontsize=10,
         y=0.995,
     )
 
-    outer_gs = gridspec.GridSpec(
-        nrows, ncols, figure=fig, hspace=0.45, wspace=0.25
-    )
+    outer_gs = gridspec.GridSpec(nrows, ncols, figure=fig, hspace=0.45, wspace=0.25)
 
     for grid_idx, (sample_idx, sample) in enumerate(selected):
         row = grid_idx // ncols

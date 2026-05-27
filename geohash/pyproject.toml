@@ -32,3 +32,8 @@ build-backend = "setuptools.build_meta"
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-v --cov=geohash --cov-report=term-missing"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.14",
+]

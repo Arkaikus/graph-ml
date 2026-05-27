@@ -3,7 +3,6 @@
 import logging
 
 import click
-import torch
 from torch.utils.data import DataLoader
 
 from geohash.config import RunConfig
@@ -188,9 +187,7 @@ def train_cmd(
         train_samples = build_windows_for_df(train_df, stoi, config.window, config.geohash, char_stoi)
         val_samples = build_windows_for_df(val_df, stoi, config.window, config.geohash, char_stoi)
         test_samples = build_windows_for_df(test_df, stoi, config.window, config.geohash, char_stoi)
-        click.echo(
-            f"✓ Windows: train={len(train_samples)}, val={len(val_samples)}, test={len(test_samples)}"
-        )
+        click.echo(f"✓ Windows: train={len(train_samples)}, val={len(val_samples)}, test={len(test_samples)}")
     else:
         click.echo("WARNING: window_index split leaks overlapping contexts — debug only.")
         stoi = build_vocab(df["geohash"].tolist(), include_unk=True)

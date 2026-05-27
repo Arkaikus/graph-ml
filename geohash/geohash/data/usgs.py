@@ -84,15 +84,17 @@ def fetch_usgs_events(
         if mag is None or t_ms is None:
             continue
 
-        rows.append({
-            "time_ms": int(t_ms),
-            "time": datetime.fromtimestamp(t_ms / 1000, tz=timezone.utc),
-            "latitude": float(lat),
-            "longitude": float(lon),
-            "depth_km": float(depth),
-            "magnitude": float(mag),
-            "place": prop.get("place", ""),
-        })
+        rows.append(
+            {
+                "time_ms": int(t_ms),
+                "time": datetime.fromtimestamp(t_ms / 1000, tz=timezone.utc),
+                "latitude": float(lat),
+                "longitude": float(lon),
+                "depth_km": float(depth),
+                "magnitude": float(mag),
+                "place": prop.get("place", ""),
+            }
+        )
 
     if not rows:
         raise RuntimeError("No events returned. Widen the date range or bounding box.")

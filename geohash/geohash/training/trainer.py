@@ -24,9 +24,7 @@ def _build_scheduler(
     if lr_scheduler == "cosine":
         return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
     if lr_scheduler == "plateau":
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", patience=lr_patience, factor=0.5
-        )
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", patience=lr_patience, factor=0.5)
     return None
 
 
@@ -72,8 +70,7 @@ def train(
     best_state_dict = copy.deepcopy(model.state_dict())
 
     logger.info(
-        "Starting training on %s for up to %d epochs "
-        "(early_stop_patience=%d, lr_scheduler=%s, grad_clip=%.2f)",
+        "Starting training on %s for up to %d epochs (early_stop_patience=%d, lr_scheduler=%s, grad_clip=%.2f)",
         device,
         epochs,
         early_stopping_patience,

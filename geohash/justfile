@@ -1,0 +1,5 @@
+lint:
+    uv run ruff check geohash/**/*.py --fix
+
+format:
+    uv run ruff format geohash/**/*.py --line-length 200
