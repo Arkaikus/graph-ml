@@ -91,7 +91,15 @@ def inspect_run_cmd(run_name: str):
     # Display artifact paths
     click.echo(f"\n📁 Artifacts:")
     click.echo("-" * 60)
-    for artifact in ["config.json", "metrics.json", "predictions.csv", "model_final.pt", "training_curves.png"]:
+    for artifact in [
+        "config.json",
+        "metrics.json",
+        "predictions.csv",
+        "preprocess.json",
+        "model_config.json",
+        "model_final.pt",
+        "training_curves.png",
+    ]:
         artifact_path = run_dir / artifact
         if artifact_path.exists():
             click.echo(f"  ✓ {artifact}")
@@ -119,12 +127,22 @@ def compare_runs_cmd(run_names: tuple[str, ...]):
         run_data = store.load_run(run_dir)
         if "metrics" in run_data:
             metrics = run_data["metrics"]
-            runs_data.append({
+            row = {
                 "name": run_dir.name,
                 "rmse": metrics.get("final_rmse"),
                 "mae": metrics.get("final_mae"),
+                "r2": metrics.get("r2"),
                 "test_loss": metrics.get("final_test_loss"),
-            })
+                "persist_rmse": None,
+                "beats_persist": None,
+            }
+            baselines = metrics.get("baselines", {})
+            if "persistence" in baselines:
+                row["persist_rmse"] = baselines["persistence"].get("rmse")
+            beats = metrics.get("beats_baseline", {})
+            if "persistence" in beats:
+                row["beats_persist"] = beats["persistence"]
+            runs_data.append(row)
 
     if not runs_data:
         click.echo("No valid runs to compare.")

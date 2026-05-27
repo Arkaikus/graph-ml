@@ -1,0 +1,15 @@
+---
+description: LSTM model and geohash embedding conventions
+globs: geohash/model/**
+alwaysApply: false
+---
+
+# Geohash Model
+
+- `NextMagnitudeLSTM`: geohash embedding + numeric features → `LayerNorm` → `pack_padded_sequence` → LSTM → MLP head.
+- PAD index = 0; UNK for OOV geohashes in flat encoding.
+- `input_mode`: `full` (both branches), `numeric_only` (zero embedding), `geohash_only` (zero numerics).
+- `encoding`: `flat` (cell-level Embedding) or `hierarchical` (char-level sum pool via `GeohashEncoder`).
+- Use `lengths.cpu()` for `pack_padded_sequence`; take last layer hidden state `h_n[-1]`.
+
+When adding encodings, keep output shape `(batch, 1)` and preserve gradient flow through both branches in tests.

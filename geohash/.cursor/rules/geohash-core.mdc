@@ -1,0 +1,22 @@
+---
+description: Core conventions for the geohash LSTM package
+alwaysApply: true
+---
+
+# Geohash Core
+
+- Package root: `geohash/`; entry: `geohash/main.py` → `quakes-geohash` / `geohash` CLI.
+- Install & run: `cd geohash && uv sync` then `uv run quakes-geohash --help`.
+- Tests: `uv run pytest tests/ -v` (coverage via pyproject addopts).
+- Config: Pydantic models in `geohash/config.py`; wire CLI options to `RunConfig`.
+- Run artifacts: `.geohash-runs/{experiment}-{timestamp}/` (config, metrics, model, preprocess).
+- Use logging, not print, in library code; type hints on public functions.
+- Catch specific exceptions; no bare `except:`.
+
+```python
+# BAD: window-index split (leaks overlapping contexts)
+train_samples = samples[:split_idx]
+
+# GOOD: split events by time_ms first, then build windows per split
+train_df, val_df, test_df = split_events_temporal(df, ...)
+```

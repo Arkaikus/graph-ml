@@ -5,16 +5,49 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence
 
 
-class NextMagnitudeLSTM(nn.Module):
-    """
-    LSTM for predicting next earthquake magnitude.
+class GeohashEncoder(nn.Module):
+    """Flat cell-level or hierarchical char-level geohash encoder."""
 
-    Combines:
-    - Geohash embedding: spatial location as sequence tokens
-    - Numerical features: magnitude, depth, time deltas, location deltas
-    - LSTM layer: sequence modeling
-    - MLP head: final prediction
-    """
+    def __init__(
+        self,
+        encoding: str,
+        vocab_size: int,
+        embedding_dim: int,
+        geohash_precision: int = 4,
+        char_vocab_size: int = 34,
+    ):
+        super().__init__()
+        self.encoding = encoding
+        self.geohash_precision = geohash_precision
+
+        if encoding == "flat":
+            self.embed = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        else:
+            self.char_embed = nn.Embedding(char_vocab_size, embedding_dim, padding_idx=0)
+
+    def forward(self, gh_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters
+        ----------
+        gh_ids : torch.Tensor
+            flat: (batch, seq_len)
+            hierarchical: (batch, seq_len, precision)
+
+        Returns
+        -------
+        torch.Tensor
+            (batch, seq_len, embedding_dim)
+        """
+        if self.encoding == "flat":
+            return self.embed(gh_ids)
+
+        # Char embeddings summed per geohash cell
+        char_emb = self.char_embed(gh_ids)  # (B, S, P, D)
+        return char_emb.sum(dim=2)
+
+
+class NextMagnitudeLSTM(nn.Module):
+    """LSTM for predicting next earthquake magnitude."""
 
     def __init__(
         self,
@@ -24,30 +57,30 @@ class NextMagnitudeLSTM(nn.Module):
         hidden_size: int,
         num_layers: int = 1,
         dropout: float = 0.0,
+        input_mode: str = "full",
+        encoding: str = "flat",
+        geohash_precision: int = 4,
+        char_vocab_size: int = 34,
     ):
-        """
-        Initialize model.
-
-        Parameters
-        ----------
-        vocab_size : int
-            Size of geohash vocabulary (including PAD).
-        embedding_dim : int
-            Dimension of geohash embeddings.
-        num_numeric : int
-            Number of numeric input features.
-        hidden_size : int
-            LSTM hidden dimension.
-        num_layers : int
-            Number of LSTM layers. Default 1.
-        dropout : float
-            Dropout rate (only applied if num_layers > 1). Default 0.0.
-        """
         super().__init__()
+        self.input_mode = input_mode
+        self.encoding = encoding
+        self.embedding_dim = embedding_dim
+        self.num_numeric = num_numeric
 
-        self.embed = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.geohash_encoder = GeohashEncoder(
+            encoding=encoding,
+            vocab_size=vocab_size,
+            embedding_dim=embedding_dim,
+            geohash_precision=geohash_precision,
+            char_vocab_size=char_vocab_size,
+        )
+
+        input_size = embedding_dim + num_numeric
+        self.input_norm = nn.LayerNorm(input_size)
+
         self.lstm = nn.LSTM(
-            input_size=embedding_dim + num_numeric,
+            input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
@@ -65,44 +98,23 @@ class NextMagnitudeLSTM(nn.Module):
         x_num: torch.Tensor,
         lengths: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Forward pass.
+        gh_emb = self.geohash_encoder(gh_ids)
 
-        Parameters
-        ----------
-        gh_ids : torch.Tensor
-            Shape (batch_size, seq_len) — geohash token IDs.
-        x_num : torch.Tensor
-            Shape (batch_size, seq_len, num_numeric) — numeric features.
-        lengths : torch.Tensor
-            Shape (batch_size,) — actual sequence lengths (before padding).
+        if self.input_mode == "numeric_only":
+            gh_emb = torch.zeros_like(gh_emb)
+        elif self.input_mode == "geohash_only":
+            x_num = torch.zeros_like(x_num)
 
-        Returns
-        -------
-        torch.Tensor
-            Shape (batch_size, 1) — predicted magnitude.
-        """
-        # Embed geohashes
-        gh_emb = self.embed(gh_ids)  # (batch_size, seq_len, embedding_dim)
+        x = torch.cat([gh_emb, x_num], dim=-1)
+        x = self.input_norm(x)
 
-        # Concatenate embeddings and numeric features
-        x = torch.cat([gh_emb, x_num], dim=-1)  # (batch_size, seq_len, embedding_dim + num_numeric)
-
-        # Pack padded sequence for efficient LSTM processing
         packed = pack_padded_sequence(
             x,
             lengths.cpu(),
             batch_first=True,
-            enforce_sorted=False
+            enforce_sorted=False,
         )
 
-        # LSTM: output last hidden state
-        _, (h_n, _) = self.lstm(packed)  # h_n: (num_layers, batch_size, hidden_size)
-
-        # Use last layer's hidden state
-        last_hidden = h_n[-1]  # (batch_size, hidden_size)
-
-        # Predict magnitude
-        pred = self.head(last_hidden)  # (batch_size, 1)
-
-        return pred
+        _, (h_n, _) = self.lstm(packed)
+        last_hidden = h_n[-1]
+        return self.head(last_hidden)

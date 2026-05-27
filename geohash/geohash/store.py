@@ -35,7 +35,9 @@ class RunStore:
         config: dict[str, Any],
         history: dict[str, list[float]],
         model: torch.nn.Module,
-        predictions: dict[str, np.ndarray],
+        predictions: dict[str, Any],
+        baselines: dict[str, dict[str, float]] | None = None,
+        beats_baseline: dict[str, bool] | None = None,
     ) -> Path:
         """
         Save complete training run artifacts.
@@ -69,17 +71,29 @@ class RunStore:
             json.dump(config_serializable, f, indent=2)
         logger.info(f"Saved config to {config_path}")
 
-        # Save metrics
-        metrics = {
+        val_loss_key = "val_loss" if "val_loss" in history else "test_loss"
+        metrics: dict[str, Any] = {
             "train_loss": history["train_loss"],
-            "test_loss": history["test_loss"],
+            "val_loss": history.get("val_loss", history.get("test_loss", [])),
+            "test_loss": history.get("test_loss", history.get("val_loss", [])),
             "rmse": history["rmse"],
             "mae": history["mae"],
-            "final_rmse": float(history["rmse"][-1]),
-            "final_mae": float(history["mae"][-1]),
-            "final_test_loss": float(history["test_loss"][-1]),
+            "final_val_loss": float(history[val_loss_key][-1]) if history.get(val_loss_key) else float("nan"),
+            "final_rmse": float(predictions.get("rmse", history["rmse"][-1])),
+            "final_mae": float(predictions.get("mae", history["mae"][-1])),
+            "final_test_loss": float(predictions.get("loss", float("nan"))),
             "r2": float(predictions.get("r2", float("nan"))),
+            "model": {
+                "rmse": float(predictions.get("rmse", float("nan"))),
+                "mae": float(predictions.get("mae", float("nan"))),
+                "r2": float(predictions.get("r2", float("nan"))),
+                "loss": float(predictions.get("loss", float("nan"))),
+            },
         }
+        if baselines:
+            metrics["baselines"] = baselines
+        if beats_baseline:
+            metrics["beats_baseline"] = beats_baseline
         metrics_path = run_dir / "metrics.json"
         with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=2)
@@ -249,9 +263,10 @@ class RunStore:
 
         epochs = np.arange(1, len(history["train_loss"]) + 1)
 
+        val_series = history.get("val_loss", history.get("test_loss", []))
         # Loss
         axes[0, 0].plot(epochs, history["train_loss"], label="Train", marker="o")
-        axes[0, 0].plot(epochs, history["test_loss"], label="Test", marker="s")
+        axes[0, 0].plot(epochs, val_series, label="Val", marker="s")
         axes[0, 0].set_xlabel("Epoch")
         axes[0, 0].set_ylabel("Loss (MSE)")
         axes[0, 0].set_title("Training Loss")
@@ -279,7 +294,7 @@ class RunStore:
             f"Final Metrics\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"Train Loss: {history['train_loss'][-1]:.4f}\n"
-            f"Test Loss: {history['test_loss'][-1]:.4f}\n"
+            f"Val Loss: {val_series[-1]:.4f}\n"
             f"RMSE: {history['rmse'][-1]:.4f}\n"
             f"MAE: {history['mae'][-1]:.4f}\n"
             f"Epochs: {len(history['train_loss'])}"

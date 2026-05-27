@@ -4,7 +4,7 @@ import logging
 
 import click
 
-from geohash.commands import train_cmd, inspect_group
+from geohash.commands import inspect_group, predict_cmd, train_cmd
 from geohash.commands.inspect import (
     compare_runs_cmd,
     inspect_run_cmd,
@@ -12,10 +12,9 @@ from geohash.commands.inspect import (
     plot_run_cmd,
 )
 
-# Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 
@@ -26,8 +25,8 @@ def cli():
     pass
 
 
-# Add commands
 cli.add_command(train_cmd)
+cli.add_command(predict_cmd)
 cli.add_command(inspect_group)
 cli.add_command(list_runs_cmd)
 cli.add_command(inspect_run_cmd)

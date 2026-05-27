@@ -1,14 +1,19 @@
 # Geohash LSTM — Earthquake Magnitude Prediction
 
-CLI-driven LSTM pipeline for predicting earthquake magnitudes using spatial geohash encoding and temporal features.
+CLI-driven LSTM pipeline for predicting earthquake magnitudes using spatial geohash encoding and spatiotemporal features.
 
 ## Features
 
 - **Data**: USGS earthquake catalog ingestion with geographic bounding box filtering
-- **Spatial Encoding**: Geohash tokens for earthquake locations
-- **Model**: LSTM combining geohash embeddings + numerical features (magnitude, depth, time deltas)
-- **CLI**: Full train/inspect/compare workflow
-- **Run Management**: Automatic artifact storage (config, metrics, predictions, plots, model weights)
+- **Spatial Encoding**: Flat cell-level or hierarchical char-level geohash embeddings
+- **Spatial Features**: Per-window deltas including `log1p(haversine)` inter-event distance
+- **Windowing Modes**: Temporal (chronological), Spatial (cluster-based), or Hybrid
+- **Evaluation**: Temporal event split (70/10/20 train/val/test), baselines, ablation modes
+- **Model**: LSTM combining geohash embeddings + numerical features
+- **Training**: Validation-based early stopping, LR scheduling, gradient clipping
+- **Inference**: Full artifact bundle + `predict` CLI
+- **CLI**: Train, predict, inspect, compare runs
+- **AI guidance**: `.cursor/rules`, `.cursor/skills`, and `AGENTS.md`
 
 ## Installation
 
@@ -18,203 +23,149 @@ uv sync
 
 ## Quick Start
 
-### 1. Train a Model
+### Train
 
 ```bash
-quakes-geohash train --experiment-name "baseline" --epochs 10 --learning-rate 1e-3
+quakes-geohash train --experiment-name baseline --epochs 10
 ```
 
-**Common Options:**
-- `--experiment-name`: Identifier for run (default: auto-generated)
-- `--epochs`: Training epochs (default: 12)
-- `--batch-size`: Batch size (default: 64)
-- `--learning-rate`: Learning rate (default: 1e-3)
-- `--hidden-size`: LSTM hidden dimension (default: 64)
-- `--embedding-dim`: Geohash embedding dimension (default: 16)
-- `--device`: `cpu` or `cuda` (default: `cpu`)
-- `--min-lat`, `--max-lat`, `--min-lon`, `--max-lon`: Geographic bounds (CA by default)
+**Split & evaluation (default):**
+- `--split-strategy temporal_event` — split events by time (recommended)
+- `--train-ratio 0.7 --val-ratio 0.1 --test-ratio 0.2`
+- `--split-strategy window_index` — legacy debug only (leaks overlapping windows)
 
-### 2. List Previous Runs
+**Model ablation:**
+- `--input-mode full|numeric_only|geohash_only`
+
+**Geohash encoding:**
+- `--geohash-encoding flat|hierarchical`
+
+**Windowing:**
+- `--window-mode temporal|spatial|hybrid`
+- `--spatial-radius-km 50 --temporal-window-days 30`
+
+**Training:**
+- `--early-stop-patience 5` (uses validation set)
+- `--lr-scheduler plateau|cosine|none`
+- `--gradient-clip 1.0`
+
+### Predict
+
+```bash
+quakes-geohash predict \
+  --run-dir .geohash-runs/baseline-20260526_120000 \
+  --input-csv events.csv \
+  --output predictions.csv
+```
+
+Input CSV must include: `time_ms`, `latitude`, `longitude`, `magnitude`, `depth_km`.
+
+### Inspect runs
 
 ```bash
 quakes-geohash inspect list-runs
-```
-
-Shows all saved runs with final RMSE, MAE, and loss.
-
-### 3. Inspect a Run
-
-```bash
 quakes-geohash inspect inspect-run baseline
-```
-
-Shows configuration, final metrics, predictions preview, and artifact locations.
-
-### 4. Compare Multiple Runs
-
-```bash
-quakes-geohash inspect compare-runs baseline experiment_v2
-```
-
-Side-by-side metrics comparison; highlights best RMSE.
-
-### 5. View Training Curves
-
-```bash
+quakes-geohash inspect compare-runs baseline v2
 quakes-geohash inspect plot-run baseline
 ```
 
-Opens training curves (loss, RMSE, MAE, summary stats).
+`compare-runs` shows model RMSE, persistence baseline RMSE, and `beats_persist`.
 
 ## Run Directory Structure
 
-Runs are saved to `~/.geohash-runs/{experiment_name}-{YYYYMMDD_HHMMSS}/`:
+Runs save to `.geohash-runs/{experiment_name}-{YYYYMMDD_HHMMSS}/`:
 
 ```
-baseline-20240526_143022/
-├── config.json              # Full configuration snapshot
-├── metrics.json             # train_loss, test_loss, rmse, mae per epoch + finals
-├── predictions.csv          # Test predictions (target vs predicted)
-├── training_curves.png      # Training history visualization
-└── model_final.pt           # Model weights (PyTorch state dict)
+baseline-20260526_143022/
+├── config.json
+├── preprocess.json          # stoi, scaler, feature cols, encoding
+├── model_config.json        # architecture hyperparams
+├── metrics.json             # curves + baselines + beats_baseline
+├── predictions.csv
+├── training_curves.png
+├── predictions_scatter.png
+├── window_spot_check.png
+└── model_final.pt
+```
+
+### metrics.json shape
+
+```json
+{
+  "model": {"rmse": 0.4, "mae": 0.26, "r2": 0.05, "loss": 0.16},
+  "baselines": {
+    "mean": {"rmse": 0.5, "mae": 0.3, "r2": 0.0},
+    "persistence": {"rmse": 0.45, "mae": 0.28, "r2": 0.02},
+    "linear_numeric": {"rmse": 0.42, "mae": 0.27, "r2": 0.03}
+  },
+  "beats_baseline": {"persistence": true, "mean": true, "linear_numeric": false}
+}
 ```
 
 ## Architecture
 
 ```
 geohash/
-├── data/                    # Data fetching & preprocessing
-│   ├── usgs.py             # USGS API client
-│   ├── features.py         # Geohash encoding, feature engineering
-│   └── dataset.py          # Windowing, collation, standardization
-├── model/
-│   └── lstm.py             # NextMagnitudeLSTM class
-├── training/
-│   ├── trainer.py          # Training loop
-│   └── evaluator.py        # Evaluation metrics
-├── commands/
-│   ├── train.py            # 'train' command
-│   └── inspect.py          # 'list-runs', 'inspect-run', 'compare-runs', 'plot-run'
-├── config.py               # Pydantic configuration models
-├── store.py                # Run storage & retrieval
-├── utils.py                # Utilities (set_seed, etc.)
-└── main.py                 # CLI entry point
+├── data/           # USGS, features, split, windowing
+├── model/          # NextMagnitudeLSTM, GeohashEncoder
+├── training/       # trainer, evaluator, baselines
+├── inference/      # artifact load/save
+├── commands/       # train, predict, inspect
+├── config.py
+├── store.py
+└── main.py
 ```
 
-## Configuration
+## AI agent source of truth
 
-All config can be set via CLI options or environment variables:
-
-```bash
-# Via CLI
-quakes-geohash train --epochs 20 --learning-rate 5e-4
-
-# Via environment (if implemented)
-export GEOHASH_EPOCHS=20 GEOHASH_LR=5e-4
-```
-
-### Config Models (Pydantic)
-
-- **USGSQueryParams**: Bounds, date range, magnitude filter, query limit
-- **WindowConfig**: Sliding window min/max lengths, stride
-- **GeohashConfig**: Geohash precision (1-12 characters)
-- **ModelConfig**: Embedding dim, hidden size, num layers, dropout
-- **TrainingConfig**: Batch size, epochs, learning rate, seed, device
-- **ExperimentConfig**: Experiment name, output directory
+- **Rules:** `.cursor/rules/` — pipeline invariants, evaluation, model conventions
+- **Skills:** `.cursor/skills/` — train-run, eval-methodology, add-feature, inference
+- **Entry:** `AGENTS.md`
 
 ## Testing
 
 ```bash
-# Run all tests with coverage
 uv run pytest tests/ -v --cov=geohash
-
-# Run specific test
-uv run pytest tests/test_config.py -v
 ```
 
-**Coverage**: ≥80% of core modules (config, data, model, training, store)
+Key test modules:
+- `test_split.py` — temporal split, no leakage, OOV handling
+- `test_data.py` — per-window deltas, windowing
+- `test_baselines.py` — baseline metrics
+- `test_inference.py` — artifact round-trip
+- `test_model.py` — flat/hierarchical encoding, ablation modes
 
-Test modules:
-- `test_config.py`: Pydantic validation
-- `test_data.py`: Geohash encoding, feature engineering, windowing
-- `test_model.py`: LSTM forward pass, shapes, gradients
-- `test_trainer.py`: Training loop, evaluation
-- `test_store.py`: Run storage/loading, artifact persistence
-
-## Example Workflow
+## Example workflow
 
 ```bash
-# Install
 uv sync --extra dev
 
-# Train baseline model
-quakes-geohash train --experiment-name "v1" --epochs 5
+# Default temporal event split + baselines
+quakes-geohash train --experiment-name v1 --epochs 20
 
-# View results
-quakes-geohash inspect inspect-run v1
+# Spatial windowing
+quakes-geohash train --experiment-name v1-spatial \
+  --window-mode spatial --spatial-radius-km 50 --epochs 20
 
-# Train variant with different hyperparams
-quakes-geohash train --experiment-name "v2" --hidden-size 128 --epochs 5
+# Ablation: numeric features only
+quakes-geohash train --experiment-name v1-numeric --input-mode numeric_only
 
-# Compare
-quakes-geohash inspect compare-runs v1 v2
+# Hierarchical geohash encoding
+quakes-geohash train --experiment-name v1-hier --geohash-encoding hierarchical
 
-# View winner's training curves
-quakes-geohash inspect plot-run v2
+quakes-geohash inspect compare-runs v1 v1-spatial v1-numeric
 ```
-
-## Development
-
-### Project Layout
-```
-geohash/
-├── geohash/               # Package source
-├── tests/                 # Test modules
-├── pyproject.toml         # Dependencies, scripts, config
-└── README.md             # This file
-```
-
-### Code Quality
-- Type hints throughout
-- Docstrings (Google/NumPy style)
-- Constants at module level
-- Logging instead of print()
-
-### Adding Features
-1. Update relevant module (data/, model/, training/, commands/)
-2. Add tests in tests/
-3. Run `pytest tests/ --cov` and ensure ≥80% coverage
-4. Update README with new CLI commands/options
 
 ## Dependencies
 
-**Core:**
-- torch ≥2.0.0
-- pandas ≥2.0.0
-- numpy ≥1.24.0
-- requests ≥2.31.0
-- click ≥8.0.0
-- matplotlib ≥3.5.0
-
-**Dev:**
-- pytest ≥7.0.0
-- pytest-cov ≥4.0.0
+- torch, pandas, numpy, requests, click, matplotlib, pydantic, scipy
 
 ## Troubleshooting
 
-### "No events returned"
-Widen geographic bounds or date range. Use `--min-lat`, `--max-lat`, `--min-lon`, `--max-lon`, or check USGS service.
+**No events returned** — widen bounds or date range.
 
-### CUDA not available
-Install CUDA-enabled PyTorch, or use `--device cpu` (default).
+**Empty val/test after split** — fetch more events or adjust `--train-ratio` / `--val-ratio` / `--test-ratio`.
 
-### Plot won't open
-Check `~/.geohash-runs/{run_dir}/training_curves.png` directly.
+**Negative R²** — compare against `baselines.persistence` in metrics.json; ensure `temporal_event` split is used.
 
-## Future Extensions
-
-- Ray Tune hyperparameter search
-- MLflow experiment tracking
-- Resume training from checkpoint
-- Distributed multi-GPU training
-- Interactive web dashboard
+**Legacy window_index split** — debug only; overlaps train/test contexts when stride=1.

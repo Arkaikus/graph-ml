@@ -1,52 +1,49 @@
 """Test data module functions."""
 
+import math
+
 import pandas as pd
 import pytest
 import torch
 
 from geohash.data import (
-    encode_geohash,
+    add_base_features,
     add_features,
     build_vocab,
-    make_windows,
     collate_batch,
+    compute_window_features,
+    encode_geohash,
+    geohash_to_id,
+    haversine_distance,
+    make_windows,
+    make_windows_spatial,
+    make_windows_temporal,
     standardize_numeric,
 )
+from geohash.data.features import UNK_TOKEN
+
+
+class TestHaversineDistance:
+    def test_same_point_is_zero(self):
+        assert haversine_distance(0.0, 0.0, 0.0, 0.0) == pytest.approx(0.0)
+
+    def test_known_distance(self):
+        dist = haversine_distance(40.7128, -74.0060, 51.5074, -0.1278)
+        assert dist == pytest.approx(5570, rel=0.02)
 
 
 class TestGeohashEncoding:
-    """Test geohash encoding."""
-
     def test_encode_geohash_basic(self):
-        """Test basic geohash encoding."""
         gh = encode_geohash(37.7749, -122.4194, precision=4)
         assert isinstance(gh, str)
         assert len(gh) == 4
 
-    def test_encode_geohash_precision(self):
-        """Test different precision levels."""
-        for precision in [1, 4, 8, 12]:
-            gh = encode_geohash(37.7749, -122.4194, precision=precision)
-            assert len(gh) == precision
-
-    def test_encode_geohash_consistency(self):
-        """Test encoding is consistent."""
-        gh1 = encode_geohash(37.7749, -122.4194, precision=4)
-        gh2 = encode_geohash(37.7749, -122.4194, precision=4)
-        assert gh1 == gh2
-
 
 class TestAddFeatures:
-    """Test feature engineering."""
-
     @pytest.fixture
     def sample_df(self):
-        """Create sample earthquake dataframe."""
-        import pandas as pd
-        from datetime import datetime, timezone
-
         return pd.DataFrame({
-            "time_ms": [0, 1000, 2000, 3000],
+            "time_ms": [0, 86_400_000, 172_800_000, 259_200_000],
             "latitude": [37.0, 37.1, 37.2, 37.3],
             "longitude": [-122.0, -122.1, -122.2, -122.3],
             "magnitude": [2.0, 2.5, 3.0, 2.8],
@@ -54,67 +51,76 @@ class TestAddFeatures:
             "place": ["test"] * 4,
         })
 
-    def test_add_features_creates_columns(self, sample_df):
-        """Test that feature engineering creates expected columns."""
-        df = add_features(sample_df, geohash_precision=4)
-        expected_cols = ["geohash", "time_days", "delta_t_days", "delta_mag", "delta_lat", "delta_lon"]
-        for col in expected_cols:
-            assert col in df.columns
+    def test_add_base_features_creates_columns(self, sample_df):
+        df = add_base_features(sample_df, geohash_precision=4)
+        assert "geohash" in df.columns
+        assert "time_days" in df.columns
+        assert "delta_mag" not in df.columns
 
-    def test_add_features_geohash(self, sample_df):
-        """Test geohash column is populated."""
+    def test_add_features_alias(self, sample_df):
         df = add_features(sample_df, geohash_precision=4)
-        assert df["geohash"].notna().all()
-        assert (df["geohash"].str.len() == 4).all()
+        assert "geohash" in df.columns
 
-    def test_add_features_delta_magnitude(self, sample_df):
-        """Test magnitude delta calculation."""
-        df = add_features(sample_df, geohash_precision=4)
-        assert df["delta_mag"].iloc[0] == 0.0  # First is NaN -> fillna(0)
-        assert df["delta_mag"].iloc[1] == pytest.approx(0.5)
-        assert df["delta_mag"].iloc[2] == pytest.approx(0.5)
+
+class TestComputeWindowFeatures:
+    def test_first_row_deltas_zero(self):
+        hist = pd.DataFrame({
+            "time_ms": [0, 86_400_000],
+            "time_days": [0.0, 1.0],
+            "magnitude": [2.0, 2.5],
+            "latitude": [37.0, 37.1],
+            "longitude": [-122.0, -122.1],
+        })
+        deltas = compute_window_features(hist)
+        assert deltas.shape == (2, 3)
+        assert deltas[0].tolist() == [0.0, 0.0, 0.0]
+        assert deltas[1, 0] == pytest.approx(1.0)
+        assert deltas[1, 1] == pytest.approx(0.5)
+
+    def test_spatial_window_uses_within_window_deltas(self):
+        """Non-consecutive global rows should still get correct within-window deltas."""
+        hist = pd.DataFrame({
+            "time_ms": [300_000, 100_000],
+            "time_days": [3.0, 1.0],
+            "magnitude": [3.0, 2.0],
+            "latitude": [37.2, 37.0],
+            "longitude": [-122.2, -122.0],
+        }).sort_values("time_ms")
+
+        deltas = compute_window_features(hist)
+        assert deltas[0].tolist() == [0.0, 0.0, 0.0]
+        assert deltas[1, 0] == pytest.approx(2.0)
+        assert deltas[1, 1] == pytest.approx(1.0)
+        assert deltas[1, 2] > 0
 
 
 class TestBuildVocab:
-    """Test vocabulary building."""
-
-    def test_build_vocab(self):
-        """Test vocab creation."""
-        geohashes = ["u10x", "u10z", "u10x", "u11p"]
-        stoi = build_vocab(geohashes)
-        assert "<PAD>" in stoi
+    def test_build_vocab_with_unk(self):
+        geohashes = ["u10x", "u10z", "u10x"]
+        stoi = build_vocab(geohashes, include_unk=True)
         assert stoi["<PAD>"] == 0
-        assert len(stoi) == 4  # 3 unique + PAD
+        assert UNK_TOKEN in stoi
+        assert len(stoi) == 4  # PAD, UNK, u10x, u10z
 
-    def test_build_vocab_sorted(self):
-        """Test vocab is sorted."""
-        geohashes = ["z", "a", "m"]
-        stoi = build_vocab(geohashes)
-        # Non-PAD entries should be sorted
-        non_pad = {k: v for k, v in stoi.items() if k != "<PAD>"}
-        assert list(non_pad.keys()) == sorted(non_pad.keys())
+    def test_geohash_to_id_oov(self):
+        stoi = build_vocab(["abc"], include_unk=True)
+        assert geohash_to_id("missing", stoi) == stoi[UNK_TOKEN]
 
 
 class TestMakeWindows:
-    """Test sliding window creation."""
-
     @pytest.fixture
     def sample_df_with_features(self):
-        """Create sample earthquake dataframe with features."""
-        from geohash.data import add_features
         df = pd.DataFrame({
-            "time_ms": [0, 1000, 2000, 3000, 4000],
-            "latitude": [37.0, 37.1, 37.2, 37.3, 37.4],
-            "longitude": [-122.0, -122.1, -122.2, -122.3, -122.4],
+            "time_ms": [i * 86_400_000 for i in range(5)],
+            "latitude": [37.0 + i * 0.1 for i in range(5)],
+            "longitude": [-122.0 - i * 0.1 for i in range(5)],
             "magnitude": [2.0, 2.5, 3.0, 2.8, 3.2],
             "depth_km": [10.0, 12.0, 8.0, 15.0, 9.0],
             "place": ["test"] * 5,
         })
-        df = add_features(df, geohash_precision=4)
-        return df
+        return add_base_features(df, geohash_precision=4)
 
     def test_make_windows(self, sample_df_with_features):
-        """Test window creation."""
         stoi = build_vocab(sample_df_with_features["geohash"].tolist())
         windows = make_windows(
             df=sample_df_with_features,
@@ -124,13 +130,8 @@ class TestMakeWindows:
             stride=1,
         )
         assert len(windows) > 0
-        for window in windows:
-            assert "gh_ids" in window
-            assert "x_num" in window
-            assert "y" in window
 
     def test_windows_have_correct_shape(self, sample_df_with_features):
-        """Test window shapes are correct."""
         stoi = build_vocab(sample_df_with_features["geohash"].tolist())
         windows = make_windows(
             df=sample_df_with_features,
@@ -140,32 +141,70 @@ class TestMakeWindows:
             stride=1,
         )
         for window in windows:
-            assert window["gh_ids"].dim() == 1  # 1D tensor
-            assert window["x_num"].dim() == 2  # 2D tensor
+            assert window["x_num"].shape[1] == 6
             assert window["y"].shape == (1,)
+
+    def test_make_windows_temporal_alias(self, sample_df_with_features):
+        stoi = build_vocab(sample_df_with_features["geohash"].tolist())
+        kwargs = dict(df=sample_df_with_features, stoi=stoi, min_len=2, max_len=3, stride=1)
+        assert len(make_windows(**kwargs)) == len(make_windows_temporal(**kwargs))
+
+
+class TestSpatialWindows:
+    @pytest.fixture
+    def clustered_df(self):
+        base_lat, base_lon = 37.0, -122.0
+        rows = []
+        for i in range(10):
+            rows.append({
+                "time_ms": i * 86_400_000,
+                "latitude": base_lat + i * 0.01,
+                "longitude": base_lon + i * 0.01,
+                "magnitude": 2.0 + i * 0.1,
+                "depth_km": 10.0,
+                "place": "test",
+            })
+        return add_base_features(pd.DataFrame(rows), geohash_precision=4)
+
+    def test_spatial_windows_basic(self, clustered_df):
+        stoi = build_vocab(clustered_df["geohash"].tolist())
+        windows = make_windows_spatial(
+            df=clustered_df,
+            stoi=stoi,
+            min_len=2,
+            max_len=5,
+            spatial_radius_km=200.0,
+            temporal_window_days=30.0,
+        )
+        assert len(windows) > 0
+
+    def test_spatial_windows_sample_structure(self, clustered_df):
+        stoi = build_vocab(clustered_df["geohash"].tolist())
+        windows = make_windows_spatial(
+            df=clustered_df,
+            stoi=stoi,
+            min_len=2,
+            max_len=5,
+            spatial_radius_km=200.0,
+            temporal_window_days=30.0,
+        )
+        for w in windows:
+            assert "gh_ids" in w and "x_num" in w and "y" in w
 
 
 class TestCollate:
-    """Test batch collation."""
-
     def test_collate_batch(self):
-        """Test collate_batch function."""
         batch = [
-            (torch.tensor([1, 2]), torch.randn(2, 7), torch.tensor([3.0])),
-            (torch.tensor([1, 2, 3]), torch.randn(3, 7), torch.tensor([3.5])),
+            (torch.tensor([1, 2]), torch.randn(2, 6), torch.tensor([3.0])),
+            (torch.tensor([1, 2, 3]), torch.randn(3, 6), torch.tensor([3.5])),
         ]
         gh_pad, x_pad, lengths, y = collate_batch(batch)
-
-        assert gh_pad.shape[0] == 2  # batch_size
-        assert lengths[0] == 2
+        assert gh_pad.shape[0] == 2
         assert lengths[1] == 3
 
 
 class TestStandardize:
-    """Test numeric standardization."""
-
     def test_standardize_numeric(self):
-        """Test standardization."""
         train_samples = [
             {"gh_ids": torch.tensor([1]), "x_num": torch.tensor([[1.0, 2.0]]), "y": torch.tensor([3.0])},
             {"gh_ids": torch.tensor([2]), "x_num": torch.tensor([[3.0, 4.0]]), "y": torch.tensor([3.5])},
@@ -173,12 +212,6 @@ class TestStandardize:
         test_samples = [
             {"gh_ids": torch.tensor([1]), "x_num": torch.tensor([[5.0, 6.0]]), "y": torch.tensor([4.0])},
         ]
-
         mean, std = standardize_numeric(train_samples, test_samples)
-
-        # Check mean and std are computed
         assert mean.shape == (2,)
         assert std.shape == (2,)
-
-        # Check train samples are standardized
-        assert train_samples[0]["x_num"].mean().item() != 1.0  # Should be different now

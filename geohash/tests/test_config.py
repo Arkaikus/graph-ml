@@ -132,9 +132,12 @@ class TestRunConfig:
         assert config.model.embedding_dim == 16
 
     def test_get_run_dir(self):
-        """Test run directory generation."""
         from pathlib import Path
         config = RunConfig(experiment={"experiment_name": "test_run"})
         run_dir = config.get_run_dir()
-        assert run_dir.parent == Path.home() / ".geohash-runs"
+        assert run_dir.parent == Path.cwd() / ".geohash-runs"
         assert "test_run" in run_dir.name
+
+    def test_split_ratios_sum(self):
+        with pytest.raises(ValueError):
+            TrainingConfig(train_ratio=0.5, val_ratio=0.3, test_ratio=0.3)

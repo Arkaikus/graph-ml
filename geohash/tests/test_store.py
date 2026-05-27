@@ -29,7 +29,7 @@ class TestRunStore:
         return NextMagnitudeLSTM(
             vocab_size=50,
             embedding_dim=8,
-            num_numeric=7,
+            num_numeric=6,
             hidden_size=32,
         )
 
@@ -44,13 +44,18 @@ class TestRunStore:
             },
             "history": {
                 "train_loss": [0.5, 0.4, 0.3],
+                "val_loss": [0.6, 0.5, 0.4],
                 "test_loss": [0.6, 0.5, 0.4],
                 "rmse": [0.8, 0.7, 0.6],
                 "mae": [0.6, 0.5, 0.4],
             },
             "predictions": {
-                "targets": np.array([2.0, 2.5, 3.0, 3.5, 4.0]),
-                "predictions": np.array([2.1, 2.4, 3.1, 3.4, 4.1]),
+                "targets": [2.0, 2.5, 3.0, 3.5, 4.0],
+                "predictions": [2.1, 2.4, 3.1, 3.4, 4.1],
+                "rmse": 0.6,
+                "mae": 0.5,
+                "r2": 0.1,
+                "loss": 0.4,
             },
         }
 

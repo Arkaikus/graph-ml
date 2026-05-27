@@ -1,0 +1,22 @@
+---
+description: Data pipeline invariants for USGS, features, and windowing
+globs: geohash/data/**
+alwaysApply: false
+---
+
+# Geohash Data Pipeline
+
+Flow: `fetch_usgs_events` → `add_base_features` → `split_events_temporal` → `build_vocab(train)` → `make_windows_*` → `compute_window_features(hist)`.
+
+- Sort events by `time_ms` before windowing.
+- Build vocab from **train events only**; map OOV to `<UNK>` (PAD=0).
+- Delta features (`delta_t_days`, `delta_mag`, `delta_distance_km`) must be computed **inside each window** via `compute_window_features(hist)`, never from global `df.diff()` in spatial/hybrid mode.
+- `_NUMERIC_COLS` in `dataset.py` is the single source of truth for numeric feature order.
+
+```python
+# BAD: global diffs reused in spatial windows
+df["delta_mag"] = df["magnitude"].diff()
+
+# GOOD: per-window deltas on sorted hist
+deltas = compute_window_features(hist.sort_values("time_ms"))
+```

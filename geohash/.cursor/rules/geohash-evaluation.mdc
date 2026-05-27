@@ -1,0 +1,15 @@
+---
+description: Evaluation methodology, baselines, and metric reporting
+globs: geohash/training/**,tests/**
+alwaysApply: false
+---
+
+# Geohash Evaluation
+
+- Default split: `temporal_event` (70/10/20 train/val/test by `time_ms`). Never use `window_index` in production runs.
+- Early stopping and LR plateau use **validation** set; test set is final eval only.
+- Always report RMSE, MAE, R² **and** compare against baselines (mean, persistence, linear_numeric).
+- Store baselines in `metrics.json` under `baselines` and `beats_baseline`.
+- Ablation via `ModelConfig.input_mode`: `full`, `numeric_only`, `geohash_only`.
+
+Tests must assert: no `time_ms` overlap across splits; spatial windows use within-window deltas.

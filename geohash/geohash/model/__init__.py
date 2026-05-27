@@ -1,5 +1,5 @@
 """Neural network models."""
 
-from .lstm import NextMagnitudeLSTM
+from .lstm import GeohashEncoder, NextMagnitudeLSTM
 
-__all__ = ["NextMagnitudeLSTM"]
+__all__ = ["NextMagnitudeLSTM", "GeohashEncoder"]

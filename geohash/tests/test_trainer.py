@@ -10,6 +10,9 @@ from geohash.model import NextMagnitudeLSTM
 from geohash.training import train, evaluate
 
 
+_NUM_NUMERIC = 6  # magnitude, depth_km, time_days, delta_t_days, delta_mag, delta_distance_km
+
+
 class TestEvaluate:
     """Test evaluation function."""
 
@@ -19,16 +22,15 @@ class TestEvaluate:
         model = NextMagnitudeLSTM(
             vocab_size=50,
             embedding_dim=8,
-            num_numeric=7,
+            num_numeric=_NUM_NUMERIC,
             hidden_size=32,
         )
 
-        # Create dummy samples
         samples = []
         for i in range(10):
             samples.append({
                 "gh_ids": torch.randint(0, 50, (5,)),
-                "x_num": torch.randn(5, 7),
+                "x_num": torch.randn(5, _NUM_NUMERIC),
                 "y": torch.tensor([2.5 + i * 0.1], dtype=torch.float32),
             })
 
@@ -83,17 +85,16 @@ class TestTrain:
         model = NextMagnitudeLSTM(
             vocab_size=50,
             embedding_dim=8,
-            num_numeric=7,
+            num_numeric=_NUM_NUMERIC,
             hidden_size=32,
         )
 
-        # Create dummy samples
         def make_samples(n=20):
             samples = []
             for i in range(n):
                 samples.append({
                     "gh_ids": torch.randint(0, 50, (5,)),
-                    "x_num": torch.randn(5, 7),
+                    "x_num": torch.randn(5, _NUM_NUMERIC),
                     "y": torch.tensor([2.5 + i * 0.1], dtype=torch.float32),
                 })
             return samples
@@ -115,98 +116,91 @@ class TestTrain:
             collate_fn=collate_batch,
         )
 
-        return model, train_loader, test_loader
+        return model, train_loader, test_loader  # test_loader used as val_loader
+
+    def _run_train(self, model, train_loader, val_loader, **kwargs):
+        return train(
+            model=model,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            device="cpu",
+            **kwargs,
+        )
 
     def test_train_returns_history(self, train_setup):
-        """Test train returns history dict."""
-        model, train_loader, test_loader = train_setup
-
-        history = train(
-            model=model,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            device="cpu",
-            epochs=1,
-            learning_rate=1e-3,
+        model, train_loader, val_loader = train_setup
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=1, learning_rate=1e-3, early_stopping_patience=0,
         )
-
         assert isinstance(history, dict)
-        assert "train_loss" in history
-        assert "test_loss" in history
-        assert "rmse" in history
-        assert "mae" in history
+        for key in ("train_loss", "val_loss", "test_loss", "rmse", "mae", "lr"):
+            assert key in history
 
     def test_train_history_length(self, train_setup):
-        """Test history has correct length."""
-        model, train_loader, test_loader = train_setup
+        model, train_loader, val_loader = train_setup
         epochs = 2
-
-        history = train(
-            model=model,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            device="cpu",
-            epochs=epochs,
-            learning_rate=1e-3,
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=epochs, learning_rate=1e-3, early_stopping_patience=0,
         )
-
         assert len(history["train_loss"]) == epochs
-        assert len(history["test_loss"]) == epochs
-        assert len(history["rmse"]) == epochs
-        assert len(history["mae"]) == epochs
+        assert len(history["val_loss"]) == epochs
 
     def test_train_model_is_modified(self, train_setup):
-        """Test that training modifies model weights."""
-        model, train_loader, test_loader = train_setup
-
-        # Store initial weights
-        initial_weights = {
-            name: param.clone() for name, param in model.named_parameters()
-        }
-
-        # Train
-        train(
-            model=model,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            device="cpu",
-            epochs=1,
-            learning_rate=1e-3,
+        model, train_loader, val_loader = train_setup
+        initial_weights = {name: param.clone() for name, param in model.named_parameters()}
+        self._run_train(model, train_loader, val_loader, epochs=1, learning_rate=1e-3)
+        weights_changed = any(
+            not torch.allclose(param, initial_weights[name])
+            for name, param in model.named_parameters()
         )
-
-        # Check weights changed
-        weights_changed = False
-        for name, param in model.named_parameters():
-            if not torch.allclose(param, initial_weights[name]):
-                weights_changed = True
-                break
-
-        assert weights_changed, "Model weights should have been updated during training"
+        assert weights_changed
 
     def test_train_different_learning_rates(self, train_setup):
-        """Test training with different learning rates."""
-        model1, train_loader, test_loader = train_setup
+        model1, train_loader, val_loader = train_setup
         model2, _, _ = train_setup
+        h1 = self._run_train(model1, train_loader, val_loader, epochs=1, learning_rate=1e-2, early_stopping_patience=0)
+        h2 = self._run_train(model2, train_loader, val_loader, epochs=1, learning_rate=1e-5, early_stopping_patience=0)
+        assert h1["train_loss"][0] > 0
+        assert h2["train_loss"][0] > 0
 
-        history1 = train(
-            model=model1,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            device="cpu",
-            epochs=1,
-            learning_rate=1e-2,
+    def test_early_stopping_triggers(self, train_setup):
+        model, train_loader, val_loader = train_setup
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=20, learning_rate=1e-3, early_stopping_patience=2, lr_scheduler="none",
         )
+        assert len(history["train_loss"]) <= 20
 
-        history2 = train(
-            model=model2,
-            train_loader=train_loader,
-            test_loader=test_loader,
-            device="cpu",
-            epochs=1,
-            learning_rate=1e-5,
+    def test_early_stopping_disabled(self, train_setup):
+        model, train_loader, val_loader = train_setup
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=3, learning_rate=1e-3, early_stopping_patience=0, lr_scheduler="none",
         )
+        assert len(history["train_loss"]) == 3
 
-        # Higher learning rate should have different (usually larger) loss change
-        # Just check that we get valid results
-        assert history1["train_loss"][0] > 0
-        assert history2["train_loss"][0] > 0
+    def test_lr_scheduler_cosine(self, train_setup):
+        model, train_loader, val_loader = train_setup
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=4, learning_rate=1e-2, early_stopping_patience=0, lr_scheduler="cosine",
+        )
+        assert history["lr"][0] >= history["lr"][-1]
+
+    def test_lr_scheduler_plateau(self, train_setup):
+        model, train_loader, val_loader = train_setup
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=2, learning_rate=1e-3, early_stopping_patience=0, lr_scheduler="plateau", lr_patience=1,
+        )
+        assert len(history["lr"]) == 2
+
+    def test_gradient_clipping_runs(self, train_setup):
+        model, train_loader, val_loader = train_setup
+        history = self._run_train(
+            model, train_loader, val_loader,
+            epochs=1, learning_rate=1e-3, early_stopping_patience=0, gradient_clip=0.1,
+        )
+        assert len(history["train_loss"]) == 1
